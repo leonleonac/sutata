@@ -17,6 +17,8 @@
         --brand: #116149;
         --brand-2: #0e7f5f;
         --danger: #b2452f;
+        --preview-h: 220px;
+        --coef-h: 280px;
       }
 
       * {
@@ -58,13 +60,15 @@
 
       .grid {
         display: grid;
-        grid-template-columns: 1.05fr 1fr;
-        gap: 14px;
+        grid-template-columns: minmax(320px, 1.05fr) 12px minmax(320px, 1fr);
+        gap: 0;
+        align-items: stretch;
       }
 
       @media (max-width: 980px) {
         .grid {
           grid-template-columns: 1fr;
+          gap: 14px;
         }
       }
 
@@ -151,7 +155,55 @@
         border: 1px solid var(--line);
         border-radius: 10px;
         margin-top: 10px;
-        max-height: 280px;
+      }
+
+      .preview-wrap {
+        height: var(--preview-h);
+        min-height: 120px;
+      }
+
+      .coef-wrap {
+        height: var(--coef-h);
+        min-height: 140px;
+      }
+
+      .panel-divider {
+        width: 12px;
+        margin: 0 2px;
+        border-radius: 10px;
+        background: linear-gradient(180deg, #d6e2ec, #c6d7e4);
+        cursor: col-resize;
+        position: relative;
+      }
+
+      .panel-divider::before {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 2px;
+        height: 44px;
+        background: #9db3c5;
+        border-radius: 2px;
+        box-shadow: 0 -8px 0 #9db3c5, 0 8px 0 #9db3c5;
+      }
+
+      .resize-handle {
+        height: 11px;
+        border-radius: 8px;
+        margin-top: 8px;
+        background: linear-gradient(90deg, #dbe5ee, #c9d8e5);
+        cursor: row-resize;
+      }
+
+      .resize-handle:hover,
+      .panel-divider:hover {
+        filter: brightness(0.96);
+      }
+
+      .collapsed {
+        display: none !important;
       }
 
       table {
@@ -216,6 +268,13 @@
         }
       }
 
+      @media (max-width: 980px) {
+        .panel-divider,
+        .resize-handle {
+          display: none !important;
+        }
+      }
+
       @keyframes rise {
         from {
           opacity: 0;
@@ -246,8 +305,15 @@
             <span id="datasetId" class="mono"></span>
           </div>
           <p id="schemaTxt" class="status"></p>
-          <div id="preview" class="table-wrap" style="display: none"></div>
+          <div class="row">
+            <button id="togglePreviewBtn" class="btn-ghost" disabled>Hide Preview</button>
+            <span class="status" style="margin-top: 0">Drag handle to resize panel.</span>
+          </div>
+          <div id="preview" class="table-wrap preview-wrap" style="display: none"></div>
+          <div id="previewResize" class="resize-handle collapsed" title="Drag to resize"></div>
         </article>
+
+        <div id="mainDivider" class="panel-divider" title="Drag to resize left and right panels"></div>
 
         <article class="card">
           <h2>2) Model</h2>
@@ -285,7 +351,8 @@
         <h2>3) Result</h2>
         <div id="summary" class="summary"></div>
         <ul id="warnings" class="list warn"></ul>
-        <div id="coef" class="table-wrap" style="margin-top: 10px; display: none"></div>
+        <div id="coef" class="table-wrap coef-wrap" style="margin-top: 10px; display: none"></div>
+        <div id="coefResize" class="resize-handle collapsed" title="Drag to resize"></div>
       </section>
     </main>
 
@@ -294,6 +361,7 @@
         datasetId: null,
         modelId: null,
         columns: [],
+        previewCollapsed: false,
       };
 
       const $ = (id) => document.getElementById(id);
@@ -381,6 +449,95 @@
         return Array.from(sel.selectedOptions).map((o) => o.value);
       }
 
+      function clamp(n, min, max) {
+        return Math.max(min, Math.min(max, n));
+      }
+
+      function initMainDivider() {
+        const divider = $("mainDivider");
+        const grid = document.querySelector(".grid");
+        if (!divider || !grid) return;
+
+        divider.addEventListener("pointerdown", (ev) => {
+          if (window.innerWidth <= 980) return;
+          ev.preventDefault();
+          const rect = grid.getBoundingClientRect();
+          divider.setPointerCapture(ev.pointerId);
+
+          const move = (e) => {
+            const left = clamp(e.clientX - rect.left, 300, rect.width - 320);
+            grid.style.gridTemplateColumns = `${left}px 12px minmax(320px, 1fr)`;
+          };
+          const up = () => {
+            divider.removeEventListener("pointermove", move);
+            divider.removeEventListener("pointerup", up);
+          };
+          divider.addEventListener("pointermove", move);
+          divider.addEventListener("pointerup", up);
+        });
+      }
+
+      function initVerticalResize(handleId, hostId, minHeight = 120, maxHeight = 700) {
+        const handle = $(handleId);
+        const host = $(hostId);
+        if (!handle || !host) return;
+
+        handle.addEventListener("pointerdown", (ev) => {
+          if (host.classList.contains("collapsed") || host.style.display === "none") return;
+          ev.preventDefault();
+
+          const startY = ev.clientY;
+          const startH = host.getBoundingClientRect().height;
+          handle.setPointerCapture(ev.pointerId);
+
+          const move = (e) => {
+            const delta = e.clientY - startY;
+            const next = clamp(startH + delta, minHeight, maxHeight);
+            host.style.height = `${next}px`;
+          };
+          const up = () => {
+            handle.removeEventListener("pointermove", move);
+            handle.removeEventListener("pointerup", up);
+          };
+          handle.addEventListener("pointermove", move);
+          handle.addEventListener("pointerup", up);
+        });
+      }
+
+      function syncPreviewVisibility() {
+        const preview = $("preview");
+        const resize = $("previewResize");
+        const toggle = $("togglePreviewBtn");
+        const hasData = preview.innerHTML.trim().length > 0;
+        toggle.disabled = !hasData;
+
+        if (!hasData) {
+          preview.style.display = "none";
+          resize.classList.add("collapsed");
+          toggle.textContent = "Hide Preview";
+          return;
+        }
+        if (state.previewCollapsed) {
+          preview.classList.add("collapsed");
+          resize.classList.add("collapsed");
+          toggle.textContent = "Show Preview";
+        } else {
+          preview.classList.remove("collapsed");
+          preview.style.display = "block";
+          resize.classList.remove("collapsed");
+          toggle.textContent = "Hide Preview";
+        }
+      }
+
+      initMainDivider();
+      initVerticalResize("previewResize", "preview", 120, 680);
+      initVerticalResize("coefResize", "coef", 140, 760);
+
+      $("togglePreviewBtn").addEventListener("click", () => {
+        state.previewCollapsed = !state.previewCollapsed;
+        syncPreviewVisibility();
+      });
+
       $("uploadBtn").addEventListener("click", async () => {
         const file = $("file").files[0];
         if (!file) {
@@ -402,6 +559,8 @@
           $("schemaTxt").textContent = `${data.schema.row_count} rows, ${data.schema.column_count} columns`;
           renderVariableOptions(state.columns);
           renderTable("preview", data.preview || []);
+          state.previewCollapsed = false;
+          syncPreviewVisibility();
           $("runStatus").textContent = "Dataset uploaded.";
         } catch (err) {
           $("runStatus").textContent = `Upload error: ${err.message}`;
@@ -444,6 +603,7 @@
           state.modelId = data.model_id;
           renderSummary(data.summary || {});
           renderTable("coef", data.coefficients || []);
+          $("coefResize").classList.toggle("collapsed", !(data.coefficients || []).length);
           $("warnings").innerHTML = (data.warnings || [])
             .map((w) => `<li>${escapeHtml(w)}</li>`)
             .join("");
