@@ -130,7 +130,18 @@ def _read_csv_with_fallback(raw_bytes: bytes) -> list[dict[str, Any]]:
     raise ValueError(f"CSV 解析失败: {' | '.join(errors)}")
 
 
-def _parse_file(filename: str, content: bytes) -> list[dict[str, Any]]:
+def _normalize_stata_value_labels(raw_value_labels: dict[Any, dict[Any, Any]]) -> dict[str, dict[str, str]]:
+    normalized: dict[str, dict[str, str]] = {}
+    for var_name, mapping in raw_value_labels.items():
+        name = str(var_name)
+        normalized[name] = {}
+        for key, label in mapping.items():
+            norm_key = _clean_value(key)
+            normalized[name][str(norm_key)] = str(label)
+    return normalized
+
+
+def _parse_file(filename: str, content: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"不支持的文件类型: {suffix}，仅支持 {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
@@ -138,8 +149,9 @@ def _parse_file(filename: str, content: bytes) -> list[dict[str, Any]]:
     if pd is None:
         if suffix != ".csv":
             raise ValueError("当前环境缺少 pandas，仅支持 CSV；Excel/DTA 请安装 pandas 后重试")
-        return _read_csv_with_fallback(content)
+        return _read_csv_with_fallback(content), {}
 
+    source_meta: dict[str, Any] = {}
     if suffix == ".csv":
         last_error: Exception | None = None
         for enc in ("utf-8", "gbk"):
@@ -160,16 +172,33 @@ def _parse_file(filename: str, content: bytes) -> list[dict[str, Any]]:
             df = pd.read_stata(io.BytesIO(content))
         except Exception as exc:  # noqa: BLE001
             raise ValueError(f"DTA 解析失败: {exc}") from exc
+        try:
+            with pd.read_stata(io.BytesIO(content), iterator=True) as reader:
+                variable_labels = {
+                    str(k): str(v)
+                    for k, v in dict(reader.variable_labels()).items()
+                    if str(v).strip()
+                }
+                value_labels = _normalize_stata_value_labels(dict(reader.value_labels()))
+                data_label = str(getattr(reader, "data_label", "") or "")
+            source_meta["stata_meta"] = {
+                "data_label": data_label,
+                "variable_labels": variable_labels,
+                "value_labels": value_labels,
+            }
+        except Exception:
+            # 标签信息读取失败不影响主体导入。
+            pass
     else:  # pragma: no cover
         raise ValueError(f"不支持的文件类型: {suffix}")
 
     if df.empty:
-        return []
+        return [], source_meta
 
     df = df.copy()
     df.columns = [str(c) for c in df.columns]
     rows = df.where(pd.notnull(df), None).to_dict(orient="records")
-    return _clean_rows(rows)
+    return _clean_rows(rows), source_meta
 
 
 def _is_numeric(value: Any) -> bool:
@@ -219,14 +248,23 @@ def _infer_column_type(values: list[Any]) -> str:
     return "string"
 
 
-def _build_schema(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_schema(rows: list[dict[str, Any]], source_meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    source_meta = source_meta or {}
+    stata_meta = source_meta.get("stata_meta") if isinstance(source_meta, dict) else None
+    variable_labels = {}
+    if isinstance(stata_meta, dict):
+        variable_labels = dict(stata_meta.get("variable_labels") or {})
+
     if not rows:
-        return {
+        base = {
             "row_count": 0,
             "column_count": 0,
             "columns": [],
             "numeric_columns": [],
         }
+        if stata_meta:
+            base["stata_meta"] = stata_meta
+        return base
 
     columns = list(rows[0].keys())
     info: list[dict[str, Any]] = []
@@ -242,25 +280,29 @@ def _build_schema(rows: list[dict[str, Any]]) -> dict[str, Any]:
         info.append(
             {
                 "name": col,
+                "label": variable_labels.get(col),
                 "missing_rate": missing / row_count,
                 "inferred_type": inferred_type,
             }
         )
 
-    return {
+    schema = {
         "row_count": row_count,
         "column_count": len(columns),
         "columns": info,
         "numeric_columns": numeric_columns,
     }
+    if stata_meta:
+        schema["stata_meta"] = stata_meta
+    return schema
 
 
 def upload_dataset(filename: str, content: bytes) -> dict[str, Any]:
-    rows = _parse_file(filename, content)
+    rows, source_meta = _parse_file(filename, content)
     if not rows:
         raise ValueError("空数据集")
 
-    schema = _build_schema(rows)
+    schema = _build_schema(rows, source_meta=source_meta)
     dataset_id = str(uuid.uuid4())
     DATASETS[dataset_id] = DatasetBundle(
         filename=filename,
@@ -587,6 +629,77 @@ def _model_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
+def _unique_preserve(seq: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in seq:
+        if item not in seen:
+            out.append(item)
+            seen.add(item)
+    return out
+
+
+def _build_model_sample(rows: list[dict[str, Any]], y_col: str, regressors: list[str]) -> tuple[list[dict[str, float]], int]:
+    sample: list[dict[str, float]] = []
+    dropped = 0
+    vars_in_model = [y_col, *regressors]
+    for row in rows:
+        parsed: dict[str, float] = {}
+        ok = True
+        for col in vars_in_model:
+            try:
+                parsed[col] = _to_float(row.get(col))
+            except Exception:
+                ok = False
+                break
+        if ok:
+            sample.append(parsed)
+        else:
+            dropped += 1
+    return sample, dropped
+
+
+def _compute_descriptive_stats(sample_rows: list[dict[str, float]], variable_names: list[str]) -> list[dict[str, Any]]:
+    stats: list[dict[str, Any]] = []
+    for var in variable_names:
+        values = [row[var] for row in sample_rows]
+        n = len(values)
+        if n == 0:
+            stats.append(
+                {
+                    "variable": var,
+                    "n": 0,
+                    "mean": None,
+                    "variance": None,
+                    "median": None,
+                    "min": None,
+                    "max": None,
+                }
+            )
+            continue
+        values_sorted = sorted(values)
+        mean = sum(values) / n
+        if n % 2 == 1:
+            median = values_sorted[n // 2]
+        else:
+            median = (values_sorted[(n // 2) - 1] + values_sorted[n // 2]) / 2
+        variance = None
+        if n > 1:
+            variance = sum((v - mean) ** 2 for v in values) / (n - 1)
+        stats.append(
+            {
+                "variable": var,
+                "n": n,
+                "mean": mean,
+                "variance": variance,
+                "median": median,
+                "min": values_sorted[0],
+                "max": values_sorted[-1],
+            }
+        )
+    return stats
+
+
 def _ensure_str_list(name: str, value: Any) -> list[str]:
     if value is None:
         return []
@@ -717,6 +830,7 @@ def run_model(payload: dict[str, Any]) -> dict[str, Any]:
         },
     }
     model_id = _model_fingerprint(normalized_payload)
+    regressors = _unique_preserve([*x_cols, *c_cols])
 
     result = run_ols(
         rows=processed_rows,
@@ -726,6 +840,8 @@ def run_model(payload: dict[str, Any]) -> dict[str, Any]:
         intercept=intercept,
         robust_se=robust_se,
     )
+    model_sample, _ = _build_model_sample(processed_rows, y_col=y_col, regressors=regressors)
+    descriptive_stats = _compute_descriptive_stats(model_sample, [y_col, *regressors])
     summary = result["summary"]
     coefficients = result["coefficients"]
     warnings = [*preprocess_warnings, *result["warnings"]]
@@ -739,6 +855,7 @@ def run_model(payload: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "fit_options": normalized_payload["fit_options"],
         "preprocess": preprocess_report,
+        "descriptive_stats": descriptive_stats,
     }
     export_csv = _render_model_csv(summary, coefficients)
     export_markdown = _render_markdown_table(summary, coefficients)

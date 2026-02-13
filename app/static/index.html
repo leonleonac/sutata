@@ -337,11 +337,29 @@
         font-size: 11px;
       }
 
+      .label-wrap {
+        max-height: 170px;
+      }
+
+      .value-label-wrap {
+        max-height: 180px;
+      }
+
       .result-panel {
         border: 1px solid var(--line);
         border-radius: 12px;
         background: #fff;
         padding: 10px;
+      }
+
+      .sub-title {
+        margin: 10px 0 4px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .stats-wrap {
+        max-height: 220px;
       }
 
       .empty-note {
@@ -399,6 +417,10 @@
             <span id="datasetId" class="mono"></span>
           </div>
           <p id="schemaTxt" class="status"></p>
+          <p id="labelTxt" class="status"></p>
+          <div id="labelDesc" class="table-wrap label-wrap" style="display: none"></div>
+          <p id="valueLabelTxt" class="status"></p>
+          <div id="valueLabelDesc" class="table-wrap value-label-wrap" style="display: none"></div>
           <div class="row">
             <button id="togglePreviewBtn" class="btn-ghost" disabled>Hide Preview</button>
             <span class="status" style="margin-top: 0">Drag handle to resize panel.</span>
@@ -457,6 +479,8 @@
           <div class="result-panel">
             <div id="summary" class="summary"></div>
             <p id="emptyResultNote" class="empty-note">No group selected.</p>
+            <p class="sub-title">Descriptive Stats</p>
+            <div id="descStats" class="table-wrap stats-wrap" style="display: none"></div>
             <ul id="warnings" class="list warn"></ul>
             <div id="coef" class="table-wrap coef-wrap" style="margin-top: 10px; display: none"></div>
             <div id="coefResize" class="resize-handle collapsed" title="Drag to resize"></div>
@@ -471,6 +495,8 @@
         modelId: null,
         activeGroupId: null,
         columns: [],
+        columnMap: {},
+        stataValueLabels: {},
         groups: [],
         modelCache: {},
         previewCollapsed: false,
@@ -536,11 +562,67 @@
 
       function renderVariableOptions(columns) {
         const options = columns
-          .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
+          .map((c) => {
+            const name = typeof c === "string" ? c : c.name;
+            const label = typeof c === "string" ? "" : c.label || "";
+            const text = label ? `${name} — ${label}` : name;
+            return `<option value="${escapeHtml(name)}">${escapeHtml(text)}</option>`;
+          })
           .join("");
         $("ySelect").innerHTML = options;
         $("xSelect").innerHTML = options;
         $("cSelect").innerHTML = options;
+      }
+
+      function normalizeValueLabelRows(variableName, mapping) {
+        const entries = Object.entries(mapping || {});
+        entries.sort((a, b) => {
+          const na = Number(a[0]);
+          const nb = Number(b[0]);
+          const numeric = Number.isFinite(na) && Number.isFinite(nb);
+          if (numeric) return na - nb;
+          return String(a[0]).localeCompare(String(b[0]));
+        });
+        return entries.map(([value, label]) => ({
+          dummy_variable: `${variableName}_${value}`,
+          value,
+          label,
+        }));
+      }
+
+      function renderVariableValueLabels(variableName) {
+        if (!variableName) {
+          $("valueLabelTxt").textContent = "";
+          $("valueLabelDesc").style.display = "none";
+          $("valueLabelDesc").innerHTML = "";
+          return;
+        }
+        const label = state.columnMap[variableName] || "";
+        const mapping = state.stataValueLabels[variableName];
+        if (!mapping || !Object.keys(mapping).length) {
+          $("valueLabelTxt").textContent = `Variable ${variableName}${label ? ` - ${label}` : ""} has no value labels.`;
+          $("valueLabelDesc").style.display = "none";
+          $("valueLabelDesc").innerHTML = "";
+          return;
+        }
+        $("valueLabelTxt").textContent = `Value labels for ${variableName}${label ? ` - ${label}` : ""}`;
+        renderTable("valueLabelDesc", normalizeValueLabelRows(variableName, mapping));
+      }
+
+      function bindVariableInspector(selectId) {
+        const select = $(selectId);
+        if (!select) return;
+
+        select.addEventListener("click", (event) => {
+          const option = event.target.closest("option");
+          if (!option) return;
+          renderVariableValueLabels(option.value);
+        });
+        select.addEventListener("change", () => {
+          const selected = Array.from(select.selectedOptions);
+          if (!selected.length) return;
+          renderVariableValueLabels(selected[selected.length - 1].value);
+        });
       }
 
       function renderSummary(summary) {
@@ -563,6 +645,8 @@
 
       function clearResultView(note = "No group selected.") {
         $("summary").innerHTML = "";
+        $("descStats").style.display = "none";
+        $("descStats").innerHTML = "";
         $("warnings").innerHTML = "";
         $("coef").style.display = "none";
         $("coef").innerHTML = "";
@@ -578,6 +662,14 @@
         state.modelId = result.model_id;
         $("emptyResultNote").classList.add("collapsed");
         renderSummary(result.summary || {});
+        const descRows = (result.descriptive_stats || []).map((row) => {
+          const label = state.columnMap[row.variable] || "";
+          return {
+            ...row,
+            variable: label ? `${row.variable} — ${label}` : row.variable,
+          };
+        });
+        renderTable("descStats", descRows);
         renderTable("coef", result.coefficients || []);
         $("coefResize").classList.toggle("collapsed", !(result.coefficients || []).length);
         $("warnings").innerHTML = (result.warnings || [])
@@ -589,6 +681,10 @@
 
       function renderGroupList() {
         const host = $("groupList");
+        const formatVar = (name) => {
+          const label = state.columnMap[name] || "";
+          return label ? `${name} — ${label}` : name;
+        };
         if (!state.datasetId) {
           host.innerHTML = `<p class="group-meta">Upload dataset first.</p>`;
           return;
@@ -600,9 +696,9 @@
         host.innerHTML = state.groups
           .map((group) => {
             const payload = group.payload || {};
-            const x = (payload.x_cols || []).join(", ") || "-";
-            const c = (payload.c_cols || []).join(", ") || "-";
-            const y = payload.y_col || "-";
+            const x = (payload.x_cols || []).map((v) => formatVar(v)).join(", ") || "-";
+            const c = (payload.c_cols || []).map((v) => formatVar(v)).join(", ") || "-";
+            const y = payload.y_col ? formatVar(payload.y_col) : "-";
             const s = group.summary || {};
             const active = state.activeGroupId === group.group_id ? "active" : "";
             return `
@@ -756,6 +852,9 @@
       initMainDivider();
       initVerticalResize("previewResize", "preview", 120, 680);
       initVerticalResize("coefResize", "coef", 140, 760);
+      bindVariableInspector("ySelect");
+      bindVariableInspector("xSelect");
+      bindVariableInspector("cSelect");
       renderGroupList();
       clearResultView("Upload dataset and create your first group.");
 
@@ -783,9 +882,31 @@
           state.modelCache = {};
           state.groups = [];
           state.activeGroupId = null;
-          state.columns = (data.schema.columns || []).map((c) => c.name);
+          state.columns = (data.schema.columns || []).map((c) => ({
+            name: c.name,
+            label: c.label || "",
+          }));
+          state.columnMap = Object.fromEntries(
+            state.columns.map((c) => [c.name, c.label || ""])
+          );
+          state.stataValueLabels = (data.schema.stata_meta && data.schema.stata_meta.value_labels) || {};
           $("datasetId").textContent = data.dataset_id;
           $("schemaTxt").textContent = `${data.schema.row_count} rows, ${data.schema.column_count} columns`;
+          const stataMeta = data.schema.stata_meta || null;
+          const labelRows = (data.schema.columns || [])
+            .filter((c) => c.label)
+            .map((c) => ({ variable: c.name, label: c.label }));
+          if (stataMeta) {
+            const labelCount = labelRows.length;
+            const dataLabel = stataMeta.data_label ? ` | data label: ${stataMeta.data_label}` : "";
+            $("labelTxt").textContent = `DTA labels loaded: ${labelCount}${dataLabel}`;
+          } else {
+            $("labelTxt").textContent = "";
+          }
+          renderTable("labelDesc", labelRows);
+          $("valueLabelTxt").textContent = "Click a variable in Y/X/C to inspect value labels.";
+          $("valueLabelDesc").style.display = "none";
+          $("valueLabelDesc").innerHTML = "";
           renderVariableOptions(state.columns);
           renderTable("preview", data.preview || []);
           state.previewCollapsed = false;

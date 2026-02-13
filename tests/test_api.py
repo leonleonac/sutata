@@ -1,5 +1,8 @@
 from pathlib import Path
+import io
 import sys
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -33,6 +36,14 @@ def test_upload_run_export_offline_flow():
     )
     assert result["summary"]["n"] == 6
     assert any(c["variable"] == "x1" for c in result["coefficients"])
+    stats_by_var = {row["variable"]: row for row in result["descriptive_stats"]}
+    assert set(stats_by_var) == {"y", "x1", "c1"}
+    assert stats_by_var["y"]["n"] == 6
+    assert stats_by_var["y"]["mean"] == pytest.approx(3.5, abs=1e-9)
+    assert stats_by_var["y"]["variance"] == pytest.approx(3.5, abs=1e-9)
+    assert stats_by_var["y"]["median"] == pytest.approx(3.5, abs=1e-9)
+    assert stats_by_var["y"]["min"] == pytest.approx(1.0, abs=1e-9)
+    assert stats_by_var["y"]["max"] == pytest.approx(6.0, abs=1e-9)
 
     exported = export_model_csv(result["model_id"])
     assert "variable,coef,std_err" in exported
@@ -113,3 +124,24 @@ def test_multiple_groups_list_and_close():
     groups_after_close = list_run_groups(dataset_id)
     assert len(groups_after_close) == 1
     assert groups_after_close[0]["group_id"] == g2["group_id"]
+
+
+def test_upload_dta_with_labels():
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"y": [1, 2, 3, 4, 5, 6], "x1": [1, 2, 3, 4, 5, 6], "g": [0, 1, 0, 1, 0, 1]})
+    buf = io.BytesIO()
+    df.to_stata(
+        buf,
+        write_index=False,
+        variable_labels={"y": "Outcome", "x1": "Predictor X1", "g": "Group Flag"},
+        value_labels={"g": {0: "Control", 1: "Treatment"}},
+    )
+    uploaded = upload_dataset("with_labels.dta", buf.getvalue())
+    schema = uploaded["schema"]
+    columns = {c["name"]: c for c in schema["columns"]}
+    assert columns["y"]["label"] == "Outcome"
+    assert columns["x1"]["label"] == "Predictor X1"
+    assert columns["g"]["label"] == "Group Flag"
+    assert schema["stata_meta"]["variable_labels"]["g"] == "Group Flag"
+    assert schema["stata_meta"]["value_labels"]["g"]["0"] == "Control"
+    assert schema["stata_meta"]["value_labels"]["g"]["1"] == "Treatment"
