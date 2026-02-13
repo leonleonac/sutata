@@ -54,6 +54,20 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS run_groups (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                closed_at TEXT
+            )
+            """
+        )
         cols = {
             row[1]
             for row in conn.execute("PRAGMA table_info(model_runs)").fetchall()
@@ -65,6 +79,21 @@ def init_db() -> None:
         ):
             if name not in cols:
                 conn.execute(f"ALTER TABLE model_runs ADD COLUMN {name} {col_type}")
+        group_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(run_groups)").fetchall()
+        }
+        for name, col_type in (
+            ("dataset_id", "TEXT NOT NULL DEFAULT ''"),
+            ("title", "TEXT NOT NULL DEFAULT ''"),
+            ("model_id", "TEXT NOT NULL DEFAULT ''"),
+            ("payload_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("summary_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("created_at", "TEXT NOT NULL DEFAULT ''"),
+            ("closed_at", "TEXT"),
+        ):
+            if name not in group_cols:
+                conn.execute(f"ALTER TABLE run_groups ADD COLUMN {name} {col_type}")
 
 
 def _clean_value(value: Any) -> Any:
@@ -769,6 +798,122 @@ def get_model_snapshot(model_id: str) -> dict[str, Any]:
     return json.loads(str(row[0]))
 
 
+def _next_group_title(conn: sqlite3.Connection, dataset_id: str) -> str:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM run_groups WHERE dataset_id = ?",
+        (dataset_id,),
+    ).fetchone()
+    count = int(row[0]) if row else 0
+    return f"Model {count + 1}"
+
+
+def create_run_group(payload: dict[str, Any]) -> dict[str, Any]:
+    dataset_id = payload.get("dataset_id")
+    if not dataset_id:
+        raise ValueError("缺少 dataset_id")
+
+    group_title = payload.get("group_title")
+    if group_title is not None:
+        if not isinstance(group_title, str) or not group_title.strip():
+            raise ValueError("group_title 必须是非空字符串")
+        group_title = group_title.strip()
+
+    model_payload = {k: v for k, v in payload.items() if k != "group_title"}
+    result = run_model(model_payload)
+
+    init_db()
+    group_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        title = group_title or _next_group_title(conn, dataset_id)
+        conn.execute(
+            """
+            INSERT INTO run_groups (id, dataset_id, title, model_id, payload_json, summary_json, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                group_id,
+                dataset_id,
+                title,
+                result["model_id"],
+                json.dumps(model_payload, ensure_ascii=False),
+                json.dumps(result["summary"], ensure_ascii=False),
+                now,
+            ),
+        )
+
+    return {
+        "group_id": group_id,
+        "dataset_id": dataset_id,
+        "title": title,
+        "model_id": result["model_id"],
+        "summary": result["summary"],
+        "created_at": now,
+        "closed_at": None,
+        "payload": model_payload,
+        "result": result,
+    }
+
+
+def list_run_groups(dataset_id: str, include_closed: bool = False) -> list[dict[str, Any]]:
+    if not dataset_id:
+        raise ValueError("缺少 dataset_id")
+    init_db()
+    query = """
+        SELECT id, dataset_id, title, model_id, payload_json, summary_json, created_at, closed_at
+        FROM run_groups
+        WHERE dataset_id = ?
+    """
+    params: tuple[Any, ...] = (dataset_id,)
+    if not include_closed:
+        query += " AND closed_at IS NULL"
+    query += " ORDER BY created_at DESC"
+
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    groups: list[dict[str, Any]] = []
+    for row in rows:
+        groups.append(
+            {
+                "group_id": str(row[0]),
+                "dataset_id": str(row[1]),
+                "title": str(row[2]),
+                "model_id": str(row[3]),
+                "payload": json.loads(str(row[4])),
+                "summary": json.loads(str(row[5])),
+                "created_at": str(row[6]),
+                "closed_at": None if row[7] is None else str(row[7]),
+            }
+        )
+    return groups
+
+
+def close_run_group(group_id: str) -> dict[str, Any]:
+    if not group_id:
+        raise ValueError("缺少 group_id")
+    init_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id, closed_at FROM run_groups WHERE id = ?",
+            (group_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("回归组不存在")
+        if row[1] is not None:
+            return {
+                "group_id": group_id,
+                "closed_at": str(row[1]),
+                "already_closed": True,
+            }
+        closed_at = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE run_groups SET closed_at = ? WHERE id = ?",
+            (closed_at, group_id),
+        )
+    return {"group_id": group_id, "closed_at": closed_at, "already_closed": False}
+
+
 def create_fastapi_app() -> Any:
     try:
         from fastapi import FastAPI, File, HTTPException
@@ -806,6 +951,34 @@ def create_fastapi_app() -> Any:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
             raise HTTPException(status_code=500, detail=f"模型运行失败: {exc}") from exc
+
+    @api.post("/api/groups/create-and-run")
+    async def api_create_group_and_run(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return create_run_group(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=f"创建回归组失败: {exc}") from exc
+
+    @api.get("/api/datasets/{dataset_id}/groups")
+    async def api_list_groups(dataset_id: str, include_closed: bool = False) -> dict[str, Any]:
+        try:
+            groups = list_run_groups(dataset_id, include_closed=include_closed)
+            return {"dataset_id": dataset_id, "groups": groups}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=f"读取回归组失败: {exc}") from exc
+
+    @api.delete("/api/groups/{group_id}")
+    async def api_close_group(group_id: str) -> dict[str, Any]:
+        try:
+            return close_run_group(group_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=f"关闭回归组失败: {exc}") from exc
 
     @api.get("/api/models/{model_id}/export.csv")
     async def api_export_csv(model_id: str) -> PlainTextResponse:

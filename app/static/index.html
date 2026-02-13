@@ -262,9 +262,103 @@
         font-weight: 700;
       }
 
+      .result-layout {
+        display: grid;
+        grid-template-columns: minmax(230px, 290px) minmax(0, 1fr);
+        gap: 12px;
+        margin-top: 8px;
+      }
+
+      .group-panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #f9fcff;
+        padding: 10px;
+      }
+
+      .group-panel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .group-list {
+        margin-top: 8px;
+        max-height: 520px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .group-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px;
+        background: #fff;
+      }
+
+      .group-item.active {
+        border-color: #8ab6a7;
+        box-shadow: inset 0 0 0 1px #8ab6a744;
+      }
+
+      .group-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .group-select {
+        text-align: left;
+        background: transparent;
+        border: none;
+        padding: 0;
+        font-size: 13px;
+        color: var(--ink);
+        cursor: pointer;
+      }
+
+      .group-close {
+        border: 1px solid #e2c5c0;
+        background: #fff6f4;
+        color: var(--danger);
+        border-radius: 8px;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .group-meta {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .result-panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        padding: 10px;
+      }
+
+      .empty-note {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 8px 0 0;
+      }
+
       @media (max-width: 700px) {
         .summary {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 980px) {
+        .result-layout {
+          grid-template-columns: 1fr;
         }
       }
 
@@ -337,9 +431,11 @@
           <input id="logCols" type="text" placeholder="x1,x2" />
           <label style="margin-top: 8px; display: block">z-score cols (comma separated)</label>
           <input id="zCols" type="text" placeholder="x1" />
+          <label style="margin-top: 8px; display: block">Group title (optional)</label>
+          <input id="groupTitle" type="text" placeholder="e.g. Baseline / Robustness A" />
 
           <div class="row" style="margin-top: 10px">
-            <button id="runBtn" class="btn-main">Run</button>
+            <button id="runBtn" class="btn-main">Run + Save Group</button>
             <button id="csvBtn" class="btn-ghost" disabled>CSV</button>
             <button id="mdBtn" class="btn-ghost" disabled>Markdown</button>
           </div>
@@ -349,10 +445,23 @@
 
       <section class="card" style="margin-top: 14px">
         <h2>3) Result</h2>
-        <div id="summary" class="summary"></div>
-        <ul id="warnings" class="list warn"></ul>
-        <div id="coef" class="table-wrap coef-wrap" style="margin-top: 10px; display: none"></div>
-        <div id="coefResize" class="resize-handle collapsed" title="Drag to resize"></div>
+        <div class="result-layout">
+          <aside class="group-panel">
+            <div class="row" style="justify-content: space-between; align-items: center">
+              <h3>Regression Groups</h3>
+              <button id="refreshGroupsBtn" class="btn-ghost">Refresh</button>
+            </div>
+            <div id="groupList" class="group-list"></div>
+          </aside>
+
+          <div class="result-panel">
+            <div id="summary" class="summary"></div>
+            <p id="emptyResultNote" class="empty-note">No group selected.</p>
+            <ul id="warnings" class="list warn"></ul>
+            <div id="coef" class="table-wrap coef-wrap" style="margin-top: 10px; display: none"></div>
+            <div id="coefResize" class="resize-handle collapsed" title="Drag to resize"></div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -360,7 +469,10 @@
       const state = {
         datasetId: null,
         modelId: null,
+        activeGroupId: null,
         columns: [],
+        groups: [],
+        modelCache: {},
         previewCollapsed: false,
       };
 
@@ -449,6 +561,118 @@
         return Array.from(sel.selectedOptions).map((o) => o.value);
       }
 
+      function clearResultView(note = "No group selected.") {
+        $("summary").innerHTML = "";
+        $("warnings").innerHTML = "";
+        $("coef").style.display = "none";
+        $("coef").innerHTML = "";
+        $("coefResize").classList.add("collapsed");
+        $("emptyResultNote").textContent = note;
+        $("emptyResultNote").classList.remove("collapsed");
+        $("csvBtn").disabled = true;
+        $("mdBtn").disabled = true;
+        state.modelId = null;
+      }
+
+      function renderResultView(result) {
+        state.modelId = result.model_id;
+        $("emptyResultNote").classList.add("collapsed");
+        renderSummary(result.summary || {});
+        renderTable("coef", result.coefficients || []);
+        $("coefResize").classList.toggle("collapsed", !(result.coefficients || []).length);
+        $("warnings").innerHTML = (result.warnings || [])
+          .map((w) => `<li>${escapeHtml(w)}</li>`)
+          .join("");
+        $("csvBtn").disabled = false;
+        $("mdBtn").disabled = false;
+      }
+
+      function renderGroupList() {
+        const host = $("groupList");
+        if (!state.datasetId) {
+          host.innerHTML = `<p class="group-meta">Upload dataset first.</p>`;
+          return;
+        }
+        if (!state.groups.length) {
+          host.innerHTML = `<p class="group-meta">No groups yet. Run model to create one.</p>`;
+          return;
+        }
+        host.innerHTML = state.groups
+          .map((group) => {
+            const payload = group.payload || {};
+            const x = (payload.x_cols || []).join(", ") || "-";
+            const c = (payload.c_cols || []).join(", ") || "-";
+            const y = payload.y_col || "-";
+            const s = group.summary || {};
+            const active = state.activeGroupId === group.group_id ? "active" : "";
+            return `
+              <div class="group-item ${active}">
+                <div class="group-top">
+                  <button class="group-select" data-select-group="${escapeHtml(group.group_id)}">
+                    ${escapeHtml(group.title)}
+                  </button>
+                  <button class="group-close" data-close-group="${escapeHtml(group.group_id)}" title="Close group">×</button>
+                </div>
+                <p class="group-meta mono">R²=${toFixedSafe(s.r_squared)} | N=${toFixedSafe(s.n)}</p>
+                <p class="group-meta">Y:${escapeHtml(y)} | X:${escapeHtml(x)} | C:${escapeHtml(c)}</p>
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      async function fetchModelResult(modelId) {
+        if (state.modelCache[modelId]) return state.modelCache[modelId];
+        const res = await fetch(`/api/models/${modelId}`);
+        const { data, raw } = await parseApiResponse(res);
+        if (!res.ok) throw new Error((data && data.detail) || raw || "load model failed");
+        state.modelCache[modelId] = data;
+        return data;
+      }
+
+      async function activateGroup(groupId) {
+        const group = state.groups.find((g) => g.group_id === groupId);
+        if (!group) return;
+        state.activeGroupId = groupId;
+        renderGroupList();
+        $("runStatus").textContent = `Loading ${group.title}...`;
+        try {
+          const result = await fetchModelResult(group.model_id);
+          renderResultView(result);
+          $("runStatus").textContent = `Viewing ${group.title}`;
+        } catch (err) {
+          $("runStatus").textContent = `Load group error: ${err.message}`;
+        }
+      }
+
+      async function loadGroups(preferGroupId = null) {
+        if (!state.datasetId) {
+          state.groups = [];
+          state.activeGroupId = null;
+          renderGroupList();
+          clearResultView("No dataset loaded.");
+          return;
+        }
+        const res = await fetch(`/api/datasets/${state.datasetId}/groups`);
+        const { data, raw } = await parseApiResponse(res);
+        if (!res.ok) throw new Error((data && data.detail) || raw || "load groups failed");
+        state.groups = data.groups || [];
+        renderGroupList();
+
+        const targetId =
+          (preferGroupId && state.groups.find((g) => g.group_id === preferGroupId) && preferGroupId) ||
+          (state.activeGroupId && state.groups.find((g) => g.group_id === state.activeGroupId) && state.activeGroupId) ||
+          (state.groups[0] && state.groups[0].group_id) ||
+          null;
+
+        if (!targetId) {
+          state.activeGroupId = null;
+          clearResultView("No groups available. Create one with Run + Save Group.");
+          return;
+        }
+        await activateGroup(targetId);
+      }
+
       function clamp(n, min, max) {
         return Math.max(min, Math.min(max, n));
       }
@@ -532,6 +756,8 @@
       initMainDivider();
       initVerticalResize("previewResize", "preview", 120, 680);
       initVerticalResize("coefResize", "coef", 140, 760);
+      renderGroupList();
+      clearResultView("Upload dataset and create your first group.");
 
       $("togglePreviewBtn").addEventListener("click", () => {
         state.previewCollapsed = !state.previewCollapsed;
@@ -554,6 +780,9 @@
           if (!res.ok) throw new Error((data && data.detail) || raw || "upload failed");
 
           state.datasetId = data.dataset_id;
+          state.modelCache = {};
+          state.groups = [];
+          state.activeGroupId = null;
           state.columns = (data.schema.columns || []).map((c) => c.name);
           $("datasetId").textContent = data.dataset_id;
           $("schemaTxt").textContent = `${data.schema.row_count} rows, ${data.schema.column_count} columns`;
@@ -561,6 +790,7 @@
           renderTable("preview", data.preview || []);
           state.previewCollapsed = false;
           syncPreviewVisibility();
+          await loadGroups();
           $("runStatus").textContent = "Dataset uploaded.";
         } catch (err) {
           $("runStatus").textContent = `Upload error: ${err.message}`;
@@ -580,6 +810,7 @@
           y_col: y,
           x_cols: x,
           c_cols: c,
+          group_title: $("groupTitle").value.trim() || undefined,
           fit_options: {
             intercept: $("intercept").checked,
             robust_se: $("robust").value,
@@ -592,7 +823,7 @@
 
         $("runStatus").textContent = "Running model...";
         try {
-          const res = await fetch("/api/models/run", {
+          const res = await fetch("/api/groups/create-and-run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -600,18 +831,47 @@
           const { data, raw } = await parseApiResponse(res);
           if (!res.ok) throw new Error((data && data.detail) || raw || "run failed");
 
-          state.modelId = data.model_id;
-          renderSummary(data.summary || {});
-          renderTable("coef", data.coefficients || []);
-          $("coefResize").classList.toggle("collapsed", !(data.coefficients || []).length);
-          $("warnings").innerHTML = (data.warnings || [])
-            .map((w) => `<li>${escapeHtml(w)}</li>`)
-            .join("");
-          $("csvBtn").disabled = false;
-          $("mdBtn").disabled = false;
-          $("runStatus").textContent = `Done. model_id=${data.model_id}`;
+          if (data.result && data.result.model_id) {
+            state.modelCache[data.result.model_id] = data.result;
+          }
+          await loadGroups(data.group_id);
+          $("runStatus").textContent = `Done. group=${data.title}`;
         } catch (err) {
           $("runStatus").textContent = `Run error: ${err.message}`;
+        }
+      });
+
+      $("refreshGroupsBtn").addEventListener("click", async () => {
+        try {
+          await loadGroups();
+          $("runStatus").textContent = "Groups refreshed.";
+        } catch (err) {
+          $("runStatus").textContent = `Refresh error: ${err.message}`;
+        }
+      });
+
+      $("groupList").addEventListener("click", async (event) => {
+        const closeBtn = event.target.closest("[data-close-group]");
+        if (closeBtn) {
+          const groupId = closeBtn.getAttribute("data-close-group");
+          if (!groupId) return;
+          try {
+            const res = await fetch(`/api/groups/${groupId}`, { method: "DELETE" });
+            const { data, raw } = await parseApiResponse(res);
+            if (!res.ok) throw new Error((data && data.detail) || raw || "close group failed");
+            await loadGroups();
+            $("runStatus").textContent = `Closed group ${groupId.slice(0, 8)}.`;
+          } catch (err) {
+            $("runStatus").textContent = `Close error: ${err.message}`;
+          }
+          return;
+        }
+
+        const selectBtn = event.target.closest("[data-select-group]");
+        if (selectBtn) {
+          const groupId = selectBtn.getAttribute("data-select-group");
+          if (!groupId) return;
+          await activateGroup(groupId);
         }
       });
 

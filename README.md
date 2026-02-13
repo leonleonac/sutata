@@ -9,6 +9,7 @@
 - 导出能力：`export_model_csv`、`export_model_markdown`
 - 快照存储：SQLite 持久化模型结果（幂等 `model_id`）
 - 内置页面：`/` 可直接上传文件并运行回归
+- 多回归组：同一数据可创建多个组并保留展示，可随时关闭
 
 ## Quick Start
 
@@ -70,6 +71,9 @@ python -m app.server
 
 - `POST /api/datasets/upload`
 - `POST /api/models/run`
+- `POST /api/groups/create-and-run`
+- `GET /api/datasets/{dataset_id}/groups`
+- `DELETE /api/groups/{group_id}`
 - `GET /api/models/{id}`
 - `GET /api/models/{id}/export.csv`
 - `GET /api/models/{id}/export.md`
@@ -79,5 +83,7 @@ python -m app.server
 - 上传 `.csv/.xlsx/.xls/.dta`
 - 选择 `Y/X/C` 并设置 `intercept`、`robust_se`
 - 配置 `log1p`、`z-score` 预处理列
+- 创建多个回归组并在侧边面板切换查看
+- 关闭不需要的回归组
 - 查看 summary / 系数表 / warnings
 - 一键打开 CSV 与 Markdown 导出

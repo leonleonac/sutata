@@ -3,7 +3,15 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.main import export_model_csv, export_model_markdown, run_model, upload_dataset
+from app.main import (
+    close_run_group,
+    create_run_group,
+    export_model_csv,
+    export_model_markdown,
+    list_run_groups,
+    run_model,
+    upload_dataset,
+)
 
 
 def test_upload_run_export_offline_flow():
@@ -66,3 +74,42 @@ def test_preprocess_log1p_and_zscore():
     assert "x1" in result["preprocess"]["zscore_cols_applied"]
     assert "x2" not in result["preprocess"]["zscore_cols_applied"]
     assert any("z-score 跳过列 x2" in msg for msg in result["warnings"])
+
+
+def test_multiple_groups_list_and_close():
+    csv_content = b"y,x1,x2\n1,1,2\n2,2,3\n3,3,4\n4,4,5\n5,5,6\n6,6,7\n"
+    uploaded = upload_dataset("groups.csv", csv_content)
+    dataset_id = uploaded["dataset_id"]
+
+    g1 = create_run_group(
+        {
+            "dataset_id": dataset_id,
+            "y_col": "y",
+            "x_cols": ["x1"],
+            "c_cols": [],
+            "fit_options": {"intercept": True, "robust_se": "none"},
+        }
+    )
+    g2 = create_run_group(
+        {
+            "dataset_id": dataset_id,
+            "y_col": "y",
+            "x_cols": ["x2"],
+            "c_cols": [],
+            "fit_options": {"intercept": True, "robust_se": "HC1"},
+            "group_title": "Alt Spec",
+        }
+    )
+    assert g1["group_id"] != g2["group_id"]
+
+    groups = list_run_groups(dataset_id)
+    assert len(groups) == 2
+    assert set(g["title"] for g in groups) == {"Model 1", "Alt Spec"}
+
+    close_result = close_run_group(g1["group_id"])
+    assert close_result["group_id"] == g1["group_id"]
+    assert close_result["already_closed"] is False
+
+    groups_after_close = list_run_groups(dataset_id)
+    assert len(groups_after_close) == 1
+    assert groups_after_close[0]["group_id"] == g2["group_id"]
