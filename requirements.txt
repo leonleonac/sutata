@@ -1,2 +1,11 @@
-# 离线可运行版本仅依赖 Python 标准库。
-# 若要启用 FastAPI + pandas + statsmodels 生产方案，请在可联网环境安装相应依赖。
+# Core dependencies for full MVP mode.
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+python-multipart>=0.0.9,<1.0
+
+pandas>=2.2,<3.0
+statsmodels>=0.14,<1.0
+openpyxl>=3.1,<4.0
+
+# Test dependencies.
+pytest>=8.0,<9.0

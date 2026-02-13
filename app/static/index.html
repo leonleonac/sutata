@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Regression MVP</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+      :root {
+        --bg-a: #f5f7f9;
+        --bg-b: #e8edf2;
+        --ink: #14212b;
+        --muted: #4f6473;
+        --card: #ffffffd9;
+        --line: #d7e0e8;
+        --brand: #116149;
+        --brand-2: #0e7f5f;
+        --danger: #b2452f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 700px at 100% 0%, #dbe9dd 0%, transparent 70%),
+          linear-gradient(160deg, var(--bg-a), var(--bg-b));
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 24px 18px 40px;
+      }
+
+      .hero {
+        animation: rise 0.6s ease-out both;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(28px, 4.4vw, 48px);
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+      }
+
+      .sub {
+        margin: 0 0 22px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.05fr 1fr;
+        gap: 14px;
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 16px;
+        backdrop-filter: blur(6px);
+        animation: rise 0.55s ease-out both;
+      }
+
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      label {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input[type="file"],
+      select,
+      input[type="text"] {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 13px;
+        background: white;
+        color: var(--ink);
+      }
+
+      select[multiple] {
+        min-height: 88px;
+      }
+
+      button {
+        border: none;
+        border-radius: 11px;
+        padding: 9px 14px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+        cursor: pointer;
+        transition: transform 0.12s ease, opacity 0.12s ease;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .btn-main {
+        background: linear-gradient(120deg, var(--brand), var(--brand-2));
+        color: #fff;
+      }
+
+      .btn-ghost {
+        background: #fff;
+        color: var(--ink);
+        border: 1px solid var(--line);
+      }
+
+      .status {
+        margin-top: 10px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .mono {
+        font-family: "IBM Plex Mono", Consolas, monospace;
+      }
+
+      .table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        margin-top: 10px;
+        max-height: 280px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 560px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #edf2f7;
+        padding: 8px 9px;
+        font-size: 12px;
+        text-align: left;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        background: #f7fbf8;
+      }
+
+      .list {
+        margin: 8px 0 0;
+        padding-left: 18px;
+      }
+
+      .warn {
+        color: var(--danger);
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .summary div {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 10px;
+        padding: 8px;
+      }
+
+      .summary p {
+        margin: 0;
+      }
+
+      .summary .k {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .summary .v {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      @media (max-width: 700px) {
+        .summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <h1>Regression Workbench</h1>
+        <p class="sub">
+          Upload dataset, choose Y/X/C, run OLS, and export result as CSV or Markdown.
+        </p>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2>1) Dataset</h2>
+          <input id="file" type="file" />
+          <div class="row" style="margin-top: 10px">
+            <button id="uploadBtn" class="btn-main">Upload</button>
+            <span id="datasetId" class="mono"></span>
+          </div>
+          <p id="schemaTxt" class="status"></p>
+          <div id="preview" class="table-wrap" style="display: none"></div>
+        </article>
+
+        <article class="card">
+          <h2>2) Model</h2>
+          <label>Y (single)</label>
+          <select id="ySelect"></select>
+          <label style="margin-top: 8px; display: block">X (multiple)</label>
+          <select id="xSelect" multiple></select>
+          <label style="margin-top: 8px; display: block">C (multiple)</label>
+          <select id="cSelect" multiple></select>
+
+          <div class="row" style="margin-top: 10px">
+            <label><input id="intercept" type="checkbox" checked /> Intercept</label>
+            <label>Robust SE</label>
+            <select id="robust" style="width: 120px">
+              <option value="none">none</option>
+              <option value="HC1">HC1</option>
+            </select>
+          </div>
+
+          <label style="margin-top: 8px; display: block">log1p cols (comma separated)</label>
+          <input id="logCols" type="text" placeholder="x1,x2" />
+          <label style="margin-top: 8px; display: block">z-score cols (comma separated)</label>
+          <input id="zCols" type="text" placeholder="x1" />
+
+          <div class="row" style="margin-top: 10px">
+            <button id="runBtn" class="btn-main">Run</button>
+            <button id="csvBtn" class="btn-ghost" disabled>CSV</button>
+            <button id="mdBtn" class="btn-ghost" disabled>Markdown</button>
+          </div>
+          <p id="runStatus" class="status"></p>
+        </article>
+      </section>
+
+      <section class="card" style="margin-top: 14px">
+        <h2>3) Result</h2>
+        <div id="summary" class="summary"></div>
+        <ul id="warnings" class="list warn"></ul>
+        <div id="coef" class="table-wrap" style="margin-top: 10px; display: none"></div>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        datasetId: null,
+        modelId: null,
+        columns: [],
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function escapeHtml(text) {
+        return String(text)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function toFixedSafe(value) {
+        if (value === null || value === undefined || value === "") return "";
+        const n = Number(value);
+        return Number.isFinite(n) ? n.toFixed(6) : String(value);
+      }
+
+      function parseCommaList(text) {
+        return text
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean);
+      }
+
+      function renderTable(hostId, rows) {
+        if (!rows || rows.length === 0) {
+          $(hostId).style.display = "none";
+          $(hostId).innerHTML = "";
+          return;
+        }
+        const keys = Object.keys(rows[0]);
+        const head = `<tr>${keys.map((k) => `<th>${escapeHtml(k)}</th>`).join("")}</tr>`;
+        const body = rows
+          .map(
+            (row) =>
+              `<tr>${keys.map((k) => `<td>${escapeHtml(row[k] ?? "")}</td>`).join("")}</tr>`
+          )
+          .join("");
+        $(hostId).innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+        $(hostId).style.display = "block";
+      }
+
+      function renderVariableOptions(columns) {
+        const options = columns
+          .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
+          .join("");
+        $("ySelect").innerHTML = options;
+        $("xSelect").innerHTML = options;
+        $("cSelect").innerHTML = options;
+      }
+
+      function renderSummary(summary) {
+        const pairs = [
+          ["R²", summary.r_squared],
+          ["Adj.R²", summary.adj_r_squared],
+          ["F", summary.f_stat],
+          ["Prob(F)", summary.prob_f],
+          ["N", summary.n],
+        ];
+        $("summary").innerHTML = pairs
+          .map(([k, v]) => `<div><p class="k">${k}</p><p class="v mono">${toFixedSafe(v)}</p></div>`)
+          .join("");
+      }
+
+      function getSelectedValues(selectId) {
+        const sel = $(selectId);
+        return Array.from(sel.selectedOptions).map((o) => o.value);
+      }
+
+      $("uploadBtn").addEventListener("click", async () => {
+        const file = $("file").files[0];
+        if (!file) {
+          $("runStatus").textContent = "Please choose a file first.";
+          return;
+        }
+
+        const form = new FormData();
+        form.append("file", file);
+        $("runStatus").textContent = "Uploading...";
+        try {
+          const res = await fetch("/api/datasets/upload", { method: "POST", body: form });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "upload failed");
+
+          state.datasetId = data.dataset_id;
+          state.columns = (data.schema.columns || []).map((c) => c.name);
+          $("datasetId").textContent = data.dataset_id;
+          $("schemaTxt").textContent = `${data.schema.row_count} rows, ${data.schema.column_count} columns`;
+          renderVariableOptions(state.columns);
+          renderTable("preview", data.preview || []);
+          $("runStatus").textContent = "Dataset uploaded.";
+        } catch (err) {
+          $("runStatus").textContent = `Upload error: ${err.message}`;
+        }
+      });
+
+      $("runBtn").addEventListener("click", async () => {
+        if (!state.datasetId) {
+          $("runStatus").textContent = "Upload dataset first.";
+          return;
+        }
+        const y = $("ySelect").value;
+        const x = getSelectedValues("xSelect");
+        const c = getSelectedValues("cSelect");
+        const payload = {
+          dataset_id: state.datasetId,
+          y_col: y,
+          x_cols: x,
+          c_cols: c,
+          fit_options: {
+            intercept: $("intercept").checked,
+            robust_se: $("robust").value,
+          },
+          preprocess: {
+            log1p_cols: parseCommaList($("logCols").value),
+            zscore_cols: parseCommaList($("zCols").value),
+          },
+        };
+
+        $("runStatus").textContent = "Running model...";
+        try {
+          const res = await fetch("/api/models/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "run failed");
+
+          state.modelId = data.model_id;
+          renderSummary(data.summary || {});
+          renderTable("coef", data.coefficients || []);
+          $("warnings").innerHTML = (data.warnings || [])
+            .map((w) => `<li>${escapeHtml(w)}</li>`)
+            .join("");
+          $("csvBtn").disabled = false;
+          $("mdBtn").disabled = false;
+          $("runStatus").textContent = `Done. model_id=${data.model_id}`;
+        } catch (err) {
+          $("runStatus").textContent = `Run error: ${err.message}`;
+        }
+      });
+
+      $("csvBtn").addEventListener("click", () => {
+        if (!state.modelId) return;
+        window.open(`/api/models/${state.modelId}/export.csv`, "_blank");
+      });
+
+      $("mdBtn").addEventListener("click", () => {
+        if (!state.modelId) return;
+        window.open(`/api/models/${state.modelId}/export.md`, "_blank");
+      });
+    </script>
+  </body>
+</html>

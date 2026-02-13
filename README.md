@@ -1,32 +1,83 @@
-# 数据分析回归软件（离线可运行修复版）
+# 数据分析回归软件（后端 MVP）
 
-为解决当前环境无法安装第三方依赖（代理 403）导致程序不可运行的问题，现提供**标准库实现**：
+基于 `项目大纲.md` 实现的可运行后端核心：
 
-- CSV 数据上传与预览（`upload_dataset`）
-- OLS 回归（`run_model`，支持常数项与 HC1）
-- 结果导出（`export_model_csv`）
-- SQLite 持久化模型快照
+- 数据导入：`upload_dataset`（支持 `.csv/.xlsx/.xls/.dta`，自动返回前 200 行预览）
+- 字段推断：返回每列缺失率与 `numeric/category/datetime/string` 推断
+- 回归引擎：`run_model`（OLS，支持 `intercept` 与 `robust_se=HC1`）
+- 预处理：支持 `log(x+1)` 与 `z-score`（按列配置）
+- 导出能力：`export_model_csv`、`export_model_markdown`
+- 快照存储：SQLite 持久化模型结果（幂等 `model_id`）
+- 内置页面：`/` 可直接上传文件并运行回归
 
-> 说明：在离线环境中优先保证可运行与可测试。Excel/DTA、FastAPI Web 接口需要联网安装第三方依赖后再启用。
+## Quick Start
 
-## 运行测试
+1. 安装依赖
 
 ```bash
-pytest -q
+pip install -r requirements.txt
 ```
 
-## 示例
+2. 启动服务
+
+```bash
+python -m app.server
+```
+
+3. 打开浏览器
+
+```text
+http://127.0.0.1:8000/
+```
+
+## 主要函数
+
+- `upload_dataset(filename: str, content: bytes) -> dict`
+- `run_model(payload: dict) -> dict`
+- `export_model_csv(model_id: str) -> str`
+- `export_model_markdown(model_id: str) -> str`
+- `get_model_snapshot(model_id: str) -> dict`
+
+## run_model 入参示例
 
 ```python
-from app.main import upload_dataset, run_model, export_model_csv
-
-uploaded = upload_dataset("sample.csv", b"y,x1\n1,1\n2,2\n3,3\n4,4\n5,5\n")
-res = run_model({
-    "dataset_id": uploaded["dataset_id"],
+payload = {
+    "dataset_id": "...",
     "y_col": "y",
-    "x_cols": ["x1"],
-    "c_cols": [],
-    "fit_options": {"intercept": True, "robust_se": "none"},
-})
-print(export_model_csv(res["model_id"]))
+    "x_cols": ["x1", "x2"],
+    "c_cols": ["c1"],
+    "fit_options": {"intercept": True, "robust_se": "HC1"},
+    "preprocess": {
+        "log1p_cols": ["x1"],     # 先做 log(x+1)
+        "zscore_cols": ["x1"],    # 再做 z-score
+    },
+}
 ```
+
+## API 启动
+
+```bash
+python -m app.server
+```
+
+可选环境变量：
+
+- `APP_HOST`（默认 `127.0.0.1`）
+- `APP_PORT`（默认 `8000`）
+- `APP_RELOAD`（`1/true` 开启热更新）
+
+主要端点：
+
+- `POST /api/datasets/upload`
+- `POST /api/models/run`
+- `GET /api/models/{id}`
+- `GET /api/models/{id}/export.csv`
+- `GET /api/models/{id}/export.md`
+
+## UI 功能
+
+- 上传 `.csv/.xlsx/.xls/.dta`
+- 选择 `Y/X/C` 并设置 `intercept`、`robust_se`
+- 配置 `log1p`、`z-score` 预处理列
+- 查看 summary / 系数表 / warnings
+- 一键打开 CSV 与 Markdown 导出
