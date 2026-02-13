@@ -1,0 +1,2 @@
+# 离线可运行版本仅依赖 Python 标准库。
+# 若要启用 FastAPI + pandas + statsmodels 生产方案，请在可联网环境安装相应依赖。
