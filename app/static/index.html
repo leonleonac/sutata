@@ -304,7 +304,17 @@
 
       .group-top {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .group-check {
+        margin: 0;
+      }
+
+      .group-panel-actions {
+        display: flex;
         gap: 6px;
         align-items: center;
       }
@@ -471,8 +481,13 @@
           <aside class="group-panel">
             <div class="row" style="justify-content: space-between; align-items: center">
               <h3>Regression Groups</h3>
-              <button id="refreshGroupsBtn" class="btn-ghost">Refresh</button>
+              <div class="group-panel-actions">
+                <button id="selectAllGroupsBtn" class="btn-ghost">Select All</button>
+                <button id="refreshGroupsBtn" class="btn-ghost">Refresh</button>
+                <button id="exportRtfBtn" class="btn-main" disabled>Export RTF</button>
+              </div>
             </div>
+            <p id="exportSelectionTxt" class="group-meta">Select groups to export.</p>
             <div id="groupList" class="group-list"></div>
           </aside>
 
@@ -498,6 +513,7 @@
         columnMap: {},
         stataValueLabels: {},
         groups: [],
+        selectedGroupIds: [],
         modelCache: {},
         previewCollapsed: false,
       };
@@ -701,9 +717,11 @@
             const y = payload.y_col ? formatVar(payload.y_col) : "-";
             const s = group.summary || {};
             const active = state.activeGroupId === group.group_id ? "active" : "";
+            const checked = state.selectedGroupIds.includes(group.group_id) ? "checked" : "";
             return `
               <div class="group-item ${active}">
                 <div class="group-top">
+                  <input class="group-check" type="checkbox" data-group-check="${escapeHtml(group.group_id)}" ${checked} />
                   <button class="group-select" data-select-group="${escapeHtml(group.group_id)}">
                     ${escapeHtml(group.title)}
                   </button>
@@ -715,6 +733,28 @@
             `;
           })
           .join("");
+      }
+
+      function syncSelectedGroupIds() {
+        const allowed = new Set(state.groups.map((g) => g.group_id));
+        state.selectedGroupIds = state.selectedGroupIds.filter((id) => allowed.has(id));
+      }
+
+      function updateExportControls() {
+        const selected = state.selectedGroupIds.length;
+        const total = state.groups.length;
+        $("exportRtfBtn").disabled = !state.datasetId || selected === 0;
+        $("selectAllGroupsBtn").disabled = !state.datasetId || total === 0;
+        $("selectAllGroupsBtn").textContent = selected > 0 && selected === total ? "Clear All" : "Select All";
+        if (!state.datasetId) {
+          $("exportSelectionTxt").textContent = "Upload dataset first.";
+          return;
+        }
+        if (total === 0) {
+          $("exportSelectionTxt").textContent = "No groups to export.";
+          return;
+        }
+        $("exportSelectionTxt").textContent = `Selected ${selected}/${total} groups for RTF export.`;
       }
 
       async function fetchModelResult(modelId) {
@@ -745,7 +785,9 @@
         if (!state.datasetId) {
           state.groups = [];
           state.activeGroupId = null;
+          state.selectedGroupIds = [];
           renderGroupList();
+          updateExportControls();
           clearResultView("No dataset loaded.");
           return;
         }
@@ -753,7 +795,9 @@
         const { data, raw } = await parseApiResponse(res);
         if (!res.ok) throw new Error((data && data.detail) || raw || "load groups failed");
         state.groups = data.groups || [];
+        syncSelectedGroupIds();
         renderGroupList();
+        updateExportControls();
 
         const targetId =
           (preferGroupId && state.groups.find((g) => g.group_id === preferGroupId) && preferGroupId) ||
@@ -856,6 +900,7 @@
       bindVariableInspector("xSelect");
       bindVariableInspector("cSelect");
       renderGroupList();
+      updateExportControls();
       clearResultView("Upload dataset and create your first group.");
 
       $("togglePreviewBtn").addEventListener("click", () => {
@@ -882,6 +927,7 @@
           state.modelCache = {};
           state.groups = [];
           state.activeGroupId = null;
+          state.selectedGroupIds = [];
           state.columns = (data.schema.columns || []).map((c) => ({
             name: c.name,
             label: c.label || "",
@@ -955,6 +1001,9 @@
           if (data.result && data.result.model_id) {
             state.modelCache[data.result.model_id] = data.result;
           }
+          if (data.group_id && !state.selectedGroupIds.includes(data.group_id)) {
+            state.selectedGroupIds.push(data.group_id);
+          }
           await loadGroups(data.group_id);
           $("runStatus").textContent = `Done. group=${data.title}`;
         } catch (err) {
@@ -969,6 +1018,67 @@
         } catch (err) {
           $("runStatus").textContent = `Refresh error: ${err.message}`;
         }
+      });
+
+      $("selectAllGroupsBtn").addEventListener("click", () => {
+        const totalIds = state.groups.map((g) => g.group_id);
+        const allSelected = totalIds.length > 0 && totalIds.every((id) => state.selectedGroupIds.includes(id));
+        if (allSelected) {
+          state.selectedGroupIds = [];
+        } else {
+          state.selectedGroupIds = [...totalIds];
+        }
+        renderGroupList();
+        updateExportControls();
+      });
+
+      $("exportRtfBtn").addEventListener("click", async () => {
+        if (!state.datasetId || !state.selectedGroupIds.length) return;
+        $("runStatus").textContent = "Exporting selected groups to RTF...";
+        try {
+          const res = await fetch("/api/groups/export.rtf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              dataset_id: state.datasetId,
+              group_ids: state.selectedGroupIds,
+            }),
+          });
+          if (!res.ok) {
+            const { data, raw } = await parseApiResponse(res);
+            throw new Error((data && data.detail) || raw || "export rtf failed");
+          }
+          const blob = await res.blob();
+          const cd = res.headers.get("content-disposition") || "";
+          const m = cd.match(/filename=\"?([^\";]+)\"?/i);
+          const filename = (m && m[1]) || "regression_groups.rtf";
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          $("runStatus").textContent = `RTF exported: ${filename}`;
+        } catch (err) {
+          $("runStatus").textContent = `RTF export error: ${err.message}`;
+        }
+      });
+
+      $("groupList").addEventListener("change", (event) => {
+        const checkbox = event.target.closest("[data-group-check]");
+        if (!checkbox) return;
+        const groupId = checkbox.getAttribute("data-group-check");
+        if (!groupId) return;
+        if (checkbox.checked) {
+          if (!state.selectedGroupIds.includes(groupId)) {
+            state.selectedGroupIds.push(groupId);
+          }
+        } else {
+          state.selectedGroupIds = state.selectedGroupIds.filter((id) => id !== groupId);
+        }
+        updateExportControls();
       });
 
       $("groupList").addEventListener("click", async (event) => {

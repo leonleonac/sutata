@@ -13,6 +13,7 @@
 - 内置页面：`/` 可直接上传文件并运行回归
 - 多回归组：同一数据可创建多个组并保留展示，可随时关闭
 - 描述统计：按组变量展示样本数、均值、方差、中位数、最小值、最大值
+- RTF 导出：可多选回归组，一键导出顶刊三线表（描述统计 + 回归结果）
 
 ## Quick Start
 
@@ -75,6 +76,7 @@ python -m app.server
 - `POST /api/datasets/upload`
 - `POST /api/models/run`
 - `POST /api/groups/create-and-run`
+- `POST /api/groups/export.rtf`
 - `GET /api/datasets/{dataset_id}/groups`
 - `DELETE /api/groups/{group_id}`
 - `GET /api/models/{id}`
@@ -88,5 +90,6 @@ python -m app.server
 - 配置 `log1p`、`z-score` 预处理列
 - 创建多个回归组并在侧边面板切换查看
 - 关闭不需要的回归组
+- 多选回归组并导出 `.rtf` 三线表
 - 查看 summary / 系数表 / warnings
 - 一键打开 CSV 与 Markdown 导出

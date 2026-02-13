@@ -1031,10 +1031,190 @@ def close_run_group(group_id: str) -> dict[str, Any]:
     return {"group_id": group_id, "closed_at": closed_at, "already_closed": False}
 
 
+def _rtf_escape(text: str) -> str:
+    out: list[str] = []
+    for ch in text:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "{":
+            out.append("\\{")
+        elif ch == "}":
+            out.append("\\}")
+        else:
+            code = ord(ch)
+            if 32 <= code <= 126:
+                out.append(ch)
+            else:
+                out.append(f"\\u{code}?")
+    return "".join(out)
+
+
+def _rtf_format_number(value: Any, digits: int = 4) -> str:
+    if value is None:
+        return ""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if math.isnan(num):
+        return ""
+    if digits == 0:
+        return str(int(round(num)))
+    return f"{num:.{digits}f}"
+
+
+def _rtf_table(
+    headers: list[str],
+    rows: list[list[str]],
+    col_widths: list[int],
+) -> str:
+    if len(headers) != len(col_widths):
+        raise ValueError("RTF 表头列数与列宽数量不一致")
+
+    lines: list[str] = []
+    all_rows = [headers, *rows]
+    for i, row in enumerate(all_rows):
+        if len(row) != len(headers):
+            continue
+        row_def = "\\trowd\\trgaph90\\trleft0"
+        if i == 0:
+            row_def += "\\trbrdrt\\brdrs\\brdrw20\\trbrdrb\\brdrs\\brdrw20"
+        elif i == len(all_rows) - 1:
+            row_def += "\\trbrdrb\\brdrs\\brdrw20"
+        lines.append(row_def)
+
+        x = 0
+        for width in col_widths:
+            x += width
+            lines.append(f"\\cellx{x}")
+
+        for cell in row:
+            lines.append(f"\\pard\\intbl\\qc {_rtf_escape(cell)}\\cell")
+        lines.append("\\row")
+    return "\n".join(lines) + "\n"
+
+
+def export_groups_rtf(dataset_id: str, group_ids: list[str]) -> tuple[str, str]:
+    if not dataset_id:
+        raise ValueError("缺少 dataset_id")
+    if not isinstance(group_ids, list) or not group_ids or any(not isinstance(g, str) or not g for g in group_ids):
+        raise ValueError("group_ids 必须是非空字符串列表")
+
+    init_db()
+    placeholders = ",".join("?" for _ in group_ids)
+    params: tuple[Any, ...] = (dataset_id, *group_ids)
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, dataset_id, title, model_id, payload_json, summary_json, created_at, closed_at
+            FROM run_groups
+            WHERE dataset_id = ? AND id IN ({placeholders})
+            """,
+            params,
+        ).fetchall()
+
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        by_id[str(row[0])] = {
+            "group_id": str(row[0]),
+            "dataset_id": str(row[1]),
+            "title": str(row[2]),
+            "model_id": str(row[3]),
+            "payload": json.loads(str(row[4])),
+            "summary": json.loads(str(row[5])),
+            "created_at": str(row[6]),
+            "closed_at": None if row[7] is None else str(row[7]),
+        }
+
+    missing = [gid for gid in group_ids if gid not in by_id]
+    if missing:
+        raise ValueError(f"以下回归组不存在或不属于当前数据集: {', '.join(missing)}")
+
+    ordered_groups = [by_id[gid] for gid in group_ids]
+    now_text = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    doc: list[str] = []
+    doc.append("{\\rtf1\\ansi\\deff0")
+    doc.append("{\\fonttbl{\\f0 Times New Roman;}}")
+    doc.append("\\viewkind4\\uc1\\pard\\f0\\fs22")
+    doc.append(f"\\b {_rtf_escape('Regression & Descriptive Statistics Report')}\\b0\\par")
+    doc.append(f"{_rtf_escape(f'Dataset ID: {dataset_id}')}\\par")
+    doc.append(f"{_rtf_escape(f'Generated: {now_text}')}\\par\\par")
+
+    for idx, group in enumerate(ordered_groups, start=1):
+        model = get_model_snapshot(group["model_id"])
+        payload = group.get("payload") or {}
+        y_text = str(payload.get("y_col", "-"))
+        x_text = ", ".join(payload.get("x_cols", [])) or "-"
+        c_text = ", ".join(payload.get("c_cols", [])) or "-"
+        summary = model.get("summary", {})
+        desc_rows = model.get("descriptive_stats", [])
+        coef_rows = model.get("coefficients", [])
+
+        group_title_line = f"Group {idx}: {group['title']}"
+        doc.append(f"\\b {_rtf_escape(group_title_line)}\\b0\\par")
+        doc.append(f"{_rtf_escape(f'Variables: Y={y_text}; X={x_text}; C={c_text}')}\\par")
+        doc.append(
+            _rtf_escape(
+                f"Model summary: R2={_rtf_format_number(summary.get('r_squared'))}; "
+                f"Adj.R2={_rtf_format_number(summary.get('adj_r_squared'))}; "
+                f"N={_rtf_format_number(summary.get('n'), digits=0)}"
+            )
+            + "\\par\\par"
+        )
+
+        doc.append(f"\\b {_rtf_escape('Descriptive Statistics')}\\b0\\par")
+        desc_table_rows = [
+            [
+                str(row.get("variable", "")),
+                _rtf_format_number(row.get("n"), digits=0),
+                _rtf_format_number(row.get("mean")),
+                _rtf_format_number(row.get("variance")),
+                _rtf_format_number(row.get("median")),
+                _rtf_format_number(row.get("min")),
+                _rtf_format_number(row.get("max")),
+            ]
+            for row in desc_rows
+        ]
+        doc.append(
+            _rtf_table(
+                ["Variable", "N", "Mean", "Variance", "Median", "Min", "Max"],
+                desc_table_rows,
+                [2200, 900, 1200, 1200, 1200, 1200, 1200],
+            )
+        )
+        doc.append("\\par")
+
+        doc.append(f"\\b {_rtf_escape('Regression Results')}\\b0\\par")
+        coef_table_rows = [
+            [
+                str(row.get("variable", "")),
+                _rtf_format_number(row.get("coef")),
+                _rtf_format_number(row.get("std_err")),
+                _rtf_format_number(row.get("t")),
+                _rtf_format_number(row.get("p")),
+                str(row.get("significance", "")),
+            ]
+            for row in coef_rows
+        ]
+        doc.append(
+            _rtf_table(
+                ["Variable", "Coef", "Std.Err", "t", "p", "Sig"],
+                coef_table_rows,
+                [2600, 1300, 1300, 1200, 1200, 900],
+            )
+        )
+        doc.append("\\par\\par")
+
+    doc.append("}")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"regression_groups_{timestamp}.rtf"
+    return "\n".join(doc), filename
+
+
 def create_fastapi_app() -> Any:
     try:
         from fastapi import FastAPI, File, HTTPException
-        from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+        from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("FastAPI 未安装，无法创建 API 应用") from exc
 
@@ -1096,6 +1276,22 @@ def create_fastapi_app() -> Any:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
             raise HTTPException(status_code=500, detail=f"关闭回归组失败: {exc}") from exc
+
+    @api.post("/api/groups/export.rtf")
+    async def api_export_groups_rtf(payload: dict[str, Any]) -> Response:
+        try:
+            dataset_id = str(payload.get("dataset_id") or "")
+            group_ids = _ensure_str_list("group_ids", payload.get("group_ids"))
+            rtf_text, filename = export_groups_rtf(dataset_id, group_ids)
+            return Response(
+                content=rtf_text,
+                media_type="application/rtf; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=f"导出 RTF 失败: {exc}") from exc
 
     @api.get("/api/models/{model_id}/export.csv")
     async def api_export_csv(model_id: str) -> PlainTextResponse:

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import (
     close_run_group,
     create_run_group,
+    export_groups_rtf,
     export_model_csv,
     export_model_markdown,
     list_run_groups,
@@ -145,3 +146,42 @@ def test_upload_dta_with_labels():
     assert schema["stata_meta"]["variable_labels"]["g"] == "Group Flag"
     assert schema["stata_meta"]["value_labels"]["g"]["0"] == "Control"
     assert schema["stata_meta"]["value_labels"]["g"]["1"] == "Treatment"
+
+
+def test_export_selected_groups_to_rtf():
+    csv_content = b"y,x1,x2\n1,1,2\n2,2,3\n3,3,4\n4,4,5\n5,5,6\n6,6,7\n"
+    uploaded = upload_dataset("rtf_groups.csv", csv_content)
+    dataset_id = uploaded["dataset_id"]
+
+    g1 = create_run_group(
+        {
+            "dataset_id": dataset_id,
+            "y_col": "y",
+            "x_cols": ["x1"],
+            "c_cols": [],
+            "fit_options": {"intercept": True, "robust_se": "none"},
+            "group_title": "Baseline",
+        }
+    )
+    g2 = create_run_group(
+        {
+            "dataset_id": dataset_id,
+            "y_col": "y",
+            "x_cols": ["x2"],
+            "c_cols": [],
+            "fit_options": {"intercept": True, "robust_se": "none"},
+            "group_title": "Alt",
+        }
+    )
+
+    rtf_text, filename = export_groups_rtf(dataset_id, [g1["group_id"]])
+    assert filename.endswith(".rtf")
+    assert rtf_text.startswith("{\\rtf1")
+    assert "Group 1: Baseline" in rtf_text
+    assert "Descriptive Statistics" in rtf_text
+    assert "Regression Results" in rtf_text
+    assert "Alt" not in rtf_text
+
+    rtf_text_2, _ = export_groups_rtf(dataset_id, [g2["group_id"], g1["group_id"]])
+    assert "Group 1: Alt" in rtf_text_2
+    assert "Group 2: Baseline" in rtf_text_2
