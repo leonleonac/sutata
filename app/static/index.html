@@ -319,6 +319,23 @@
           .filter(Boolean);
       }
 
+      async function parseApiResponse(res) {
+        const ctype = res.headers.get("content-type") || "";
+        const text = await res.text();
+        if (ctype.includes("application/json")) {
+          try {
+            return { data: JSON.parse(text), raw: text };
+          } catch (_) {
+            return { data: null, raw: text };
+          }
+        }
+        try {
+          return { data: JSON.parse(text), raw: text };
+        } catch (_) {
+          return { data: null, raw: text };
+        }
+      }
+
       function renderTable(hostId, rows) {
         if (!rows || rows.length === 0) {
           $(hostId).style.display = "none";
@@ -376,8 +393,8 @@
         $("runStatus").textContent = "Uploading...";
         try {
           const res = await fetch("/api/datasets/upload", { method: "POST", body: form });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || "upload failed");
+          const { data, raw } = await parseApiResponse(res);
+          if (!res.ok) throw new Error((data && data.detail) || raw || "upload failed");
 
           state.datasetId = data.dataset_id;
           state.columns = (data.schema.columns || []).map((c) => c.name);
@@ -421,8 +438,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || "run failed");
+          const { data, raw } = await parseApiResponse(res);
+          if (!res.ok) throw new Error((data && data.detail) || raw || "run failed");
 
           state.modelId = data.model_id;
           renderSummary(data.summary || {});

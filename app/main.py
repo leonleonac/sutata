@@ -771,7 +771,7 @@ def get_model_snapshot(model_id: str) -> dict[str, Any]:
 
 def create_fastapi_app() -> Any:
     try:
-        from fastapi import FastAPI, File, HTTPException, UploadFile
+        from fastapi import FastAPI, File, HTTPException
         from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("FastAPI 未安装，无法创建 API 应用") from exc
@@ -788,10 +788,11 @@ def create_fastapi_app() -> Any:
         )
 
     @api.post("/api/datasets/upload")
-    async def api_upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
+    async def api_upload_dataset(file: Any = File(...)) -> dict[str, Any]:
         try:
             content = await file.read()
-            return upload_dataset(file.filename or "uploaded.csv", content)
+            filename = getattr(file, "filename", None) or "uploaded.csv"
+            return upload_dataset(filename, content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
