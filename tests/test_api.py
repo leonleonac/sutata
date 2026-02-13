@@ -1,5 +1,6 @@
 from pathlib import Path
 import io
+import re
 import sys
 
 import pytest
@@ -85,7 +86,7 @@ def test_preprocess_log1p_and_zscore():
     assert "x1" in result["preprocess"]["log1p_cols_applied"]
     assert "x1" in result["preprocess"]["zscore_cols_applied"]
     assert "x2" not in result["preprocess"]["zscore_cols_applied"]
-    assert any("z-score 跳过列 x2" in msg for msg in result["warnings"])
+    assert any(("z-score" in msg and "x2" in msg) for msg in result["warnings"])
 
 
 def test_multiple_groups_list_and_close():
@@ -177,11 +178,61 @@ def test_export_selected_groups_to_rtf():
     rtf_text, filename = export_groups_rtf(dataset_id, [g1["group_id"]])
     assert filename.endswith(".rtf")
     assert rtf_text.startswith("{\\rtf1")
-    assert "Group 1: Baseline" in rtf_text
-    assert "Descriptive Statistics" in rtf_text
-    assert "Regression Results" in rtf_text
+    assert "Models: (1) Baseline" in rtf_text
+    assert "Panel A: Descriptive statistics" in rtf_text
+    assert "Panel B: Regression results" in rtf_text
+    assert "VARIABLES" in rtf_text
+    assert "Observations" in rtf_text
     assert "Alt" not in rtf_text
 
     rtf_text_2, _ = export_groups_rtf(dataset_id, [g2["group_id"], g1["group_id"]])
-    assert "Group 1: Alt" in rtf_text_2
-    assert "Group 2: Baseline" in rtf_text_2
+    assert "Models: (1) Alt | (2) Baseline" in rtf_text_2
+    assert "Panel B: Regression results" in rtf_text_2
+
+
+def test_export_rtf_format_options():
+    csv_content = b"y,x1\n1000,1000\n2000,2000\n3000,3000\n4000,4000\n5000,5000\n6000,6000\n"
+    uploaded = upload_dataset("rtf_digits.csv", csv_content)
+    dataset_id = uploaded["dataset_id"]
+
+    g1 = create_run_group(
+        {
+            "dataset_id": dataset_id,
+            "y_col": "y",
+            "x_cols": ["x1"],
+            "c_cols": [],
+            "fit_options": {"intercept": True, "robust_se": "none"},
+            "group_title": "Fmt",
+        }
+    )
+
+    rtf_text, _ = export_groups_rtf(
+        dataset_id,
+        [g1["group_id"]],
+        format_options={
+            "coef_digits": 3,
+            "t_digits": 2,
+            "stat_digits": 4,
+            "desc_digits": 1,
+            "thousands_sep": True,
+            "align_significance": True,
+        },
+    )
+    assert "3,500.0" in rtf_text
+    assert "1.000***" in rtf_text
+    assert re.search(r"\(-?[0-9,]+\.[0-9]{2}\)", rtf_text)
+
+    rtf_text_no_sep, _ = export_groups_rtf(
+        dataset_id,
+        [g1["group_id"]],
+        format_options={
+            "coef_digits": 1,
+            "t_digits": 1,
+            "stat_digits": 2,
+            "desc_digits": 0,
+            "thousands_sep": False,
+            "align_significance": False,
+        },
+    )
+    assert "3,500.0" not in rtf_text_no_sep
+    assert "3500" in rtf_text_no_sep

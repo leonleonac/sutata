@@ -100,7 +100,8 @@
 
       input[type="file"],
       select,
-      input[type="text"] {
+      input[type="text"],
+      input[type="number"] {
         width: 100%;
         border: 1px solid var(--line);
         border-radius: 10px;
@@ -319,6 +320,26 @@
         align-items: center;
       }
 
+      .export-format {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .export-format label {
+        font-size: 11px;
+        color: var(--muted);
+        display: block;
+      }
+
+      .export-format .wide {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
       .group-select {
         text-align: left;
         background: transparent;
@@ -488,6 +509,14 @@
               </div>
             </div>
             <p id="exportSelectionTxt" class="group-meta">Select groups to export.</p>
+            <div class="export-format">
+              <label>coef digits <input id="rtfCoefDigits" type="number" min="0" max="8" value="3" /></label>
+              <label>t digits <input id="rtfTDigits" type="number" min="0" max="8" value="2" /></label>
+              <label>stat digits <input id="rtfStatDigits" type="number" min="0" max="8" value="3" /></label>
+              <label>desc digits <input id="rtfDescDigits" type="number" min="0" max="8" value="3" /></label>
+              <label class="wide"><input id="rtfThousandsSep" type="checkbox" checked />Thousands separator</label>
+              <label class="wide"><input id="rtfAlignSig" type="checkbox" checked />Align significance marks</label>
+            </div>
             <div id="groupList" class="group-list"></div>
           </aside>
 
@@ -539,6 +568,12 @@
           .split(",")
           .map((v) => v.trim())
           .filter(Boolean);
+      }
+
+      function parseIntInRange(value, fallback, min, max) {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n)) return fallback;
+        return clamp(n, min, max);
       }
 
       async function parseApiResponse(res) {
@@ -1042,6 +1077,14 @@
             body: JSON.stringify({
               dataset_id: state.datasetId,
               group_ids: state.selectedGroupIds,
+              format_options: {
+                coef_digits: parseIntInRange($("rtfCoefDigits").value, 3, 0, 8),
+                t_digits: parseIntInRange($("rtfTDigits").value, 2, 0, 8),
+                stat_digits: parseIntInRange($("rtfStatDigits").value, 3, 0, 8),
+                desc_digits: parseIntInRange($("rtfDescDigits").value, 3, 0, 8),
+                thousands_sep: $("rtfThousandsSep").checked,
+                align_significance: $("rtfAlignSig").checked,
+              },
             }),
           });
           if (!res.ok) {

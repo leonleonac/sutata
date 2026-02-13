@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import hashlib
@@ -127,7 +127,7 @@ def _read_csv_with_fallback(raw_bytes: bytes) -> list[dict[str, Any]]:
             return rows
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{enc}: {exc}")
-    raise ValueError(f"CSV 解析失败: {' | '.join(errors)}")
+    raise ValueError(f"CSV 瑙ｆ瀽澶辫触: {' | '.join(errors)}")
 
 
 def _normalize_stata_value_labels(raw_value_labels: dict[Any, dict[Any, Any]]) -> dict[str, dict[str, str]]:
@@ -144,11 +144,11 @@ def _normalize_stata_value_labels(raw_value_labels: dict[Any, dict[Any, Any]]) -
 def _parse_file(filename: str, content: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
-        raise ValueError(f"不支持的文件类型: {suffix}，仅支持 {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
+        raise ValueError(f"涓嶆敮鎸佺殑鏂囦欢绫诲瀷: {suffix}锛屼粎鏀寔 {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
 
     if pd is None:
         if suffix != ".csv":
-            raise ValueError("当前环境缺少 pandas，仅支持 CSV；Excel/DTA 请安装 pandas 后重试")
+            raise ValueError("pandas is required for Excel/DTA files; only CSV is supported without pandas")
         return _read_csv_with_fallback(content), {}
 
     source_meta: dict[str, Any] = {}
@@ -161,17 +161,17 @@ def _parse_file(filename: str, content: bytes) -> tuple[list[dict[str, Any]], di
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
         else:
-            raise ValueError(f"CSV 解析失败: {last_error}") from last_error
+            raise ValueError(f"CSV 瑙ｆ瀽澶辫触: {last_error}") from last_error
     elif suffix in {".xlsx", ".xls"}:
         try:
             df = pd.read_excel(io.BytesIO(content))
         except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"Excel 解析失败: {exc}") from exc
+            raise ValueError(f"Excel 瑙ｆ瀽澶辫触: {exc}") from exc
     elif suffix == ".dta":
         try:
             df = pd.read_stata(io.BytesIO(content))
         except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"DTA 解析失败: {exc}") from exc
+            raise ValueError(f"DTA 瑙ｆ瀽澶辫触: {exc}") from exc
         try:
             with pd.read_stata(io.BytesIO(content), iterator=True) as reader:
                 variable_labels = {
@@ -187,10 +187,10 @@ def _parse_file(filename: str, content: bytes) -> tuple[list[dict[str, Any]], di
                 "value_labels": value_labels,
             }
         except Exception:
-            # 标签信息读取失败不影响主体导入。
+            # Label extraction errors should not block file import.
             pass
     else:  # pragma: no cover
-        raise ValueError(f"不支持的文件类型: {suffix}")
+        raise ValueError(f"涓嶆敮鎸佺殑鏂囦欢绫诲瀷: {suffix}")
 
     if df.empty:
         return [], source_meta
@@ -300,7 +300,7 @@ def _build_schema(rows: list[dict[str, Any]], source_meta: dict[str, Any] | None
 def upload_dataset(filename: str, content: bytes) -> dict[str, Any]:
     rows, source_meta = _parse_file(filename, content)
     if not rows:
-        raise ValueError("空数据集")
+        raise ValueError("绌烘暟鎹泦")
 
     schema = _build_schema(rows, source_meta=source_meta)
     dataset_id = str(uuid.uuid4())
@@ -319,7 +319,7 @@ def upload_dataset(filename: str, content: bytes) -> dict[str, Any]:
 
 def _to_float(value: Any) -> float:
     if value in (None, ""):
-        raise ValueError("缺失值")
+        raise ValueError("missing value")
     return float(value)
 
 
@@ -345,7 +345,7 @@ def _inverse(a: list[list[float]]) -> list[list[float]]:
     for i in range(n):
         pivot = max(range(i, n), key=lambda r: abs(aug[r][i]))
         if abs(aug[pivot][i]) < 1e-12:
-            raise ValueError("矩阵不可逆，可能存在完全共线性")
+            raise ValueError("matrix is singular; possible perfect multicollinearity")
         aug[i], aug[pivot] = aug[pivot], aug[i]
         div = aug[i][i]
         for j in range(2 * n):
@@ -387,11 +387,11 @@ def _run_ols_manual(
 
     n = len(data_y)
     if n < 5:
-        raise ValueError("删除缺失后样本数小于 5")
+        raise ValueError("鍒犻櫎缂哄け鍚庢牱鏈暟灏忎簬 5")
 
     k = len(data_x[0])
     if n <= k:
-        raise ValueError(f"样本数不足（n={n}）无法估计参数（k={k}）")
+        raise ValueError(f"insufficient observations (n={n}) for parameter count (k={k})")
 
     y_mat = [[v] for v in data_y]
     xt = _transpose(data_x)
@@ -445,9 +445,9 @@ def _run_ols_manual(
 
     warnings: list[str] = []
     if dropped:
-        warnings.append(f"因缺失值删除样本 {dropped} 行。")
+        warnings.append(f"dropped {dropped} rows due to missing values")
     if n <= 2 * k:
-        warnings.append("样本数相对变量数偏少，估计结果可能不稳定。")
+        warnings.append("sample size is relatively small compared with variable count")
 
     f_stat = None
     prob_f = None
@@ -475,16 +475,16 @@ def _run_ols_statsmodels(
     robust_se: str,
 ) -> dict[str, Any]:
     if pd is None or sm is None:  # pragma: no cover
-        raise RuntimeError("缺少 pandas/statsmodels")
+        raise RuntimeError("缂哄皯 pandas/statsmodels")
 
     model_vars = [y_col, *regressors]
     df = pd.DataFrame(rows)
     if df.empty:
-        raise ValueError("空数据集")
+        raise ValueError("绌烘暟鎹泦")
 
     for col in model_vars:
         if col not in df.columns:
-            raise ValueError(f"字段不存在: {col}")
+            raise ValueError(f"瀛楁涓嶅瓨鍦? {col}")
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     n_before = len(df)
@@ -492,7 +492,7 @@ def _run_ols_statsmodels(
     dropped = n_before - len(sliced)
     n = len(sliced)
     if n < 5:
-        raise ValueError("删除缺失后样本数小于 5")
+        raise ValueError("鍒犻櫎缂哄け鍚庢牱鏈暟灏忎簬 5")
 
     y = sliced[y_col]
     X = sliced[regressors]
@@ -502,7 +502,7 @@ def _run_ols_statsmodels(
     try:
         model = sm.OLS(y, X).fit(cov_type="HC1" if robust_se == "HC1" else "nonrobust")
     except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"OLS 计算失败: {exc}") from exc
+        raise ValueError(f"OLS 璁＄畻澶辫触: {exc}") from exc
 
     ci = model.conf_int()
     coefficients: list[dict[str, Any]] = []
@@ -524,12 +524,12 @@ def _run_ols_statsmodels(
 
     warnings: list[str] = []
     if dropped > 0:
-        warnings.append(f"因缺失值删除样本 {dropped} 行。")
+        warnings.append(f"dropped {dropped} rows due to missing values")
     if n <= 2 * len(coefficients):
-        warnings.append("样本数相对变量数偏少，估计结果可能不稳定。")
+        warnings.append("sample size is relatively small compared with variable count")
     cond = getattr(model, "condition_number", None)
     if isinstance(cond, (int, float)) and cond > 1e4:
-        warnings.append(f"检测到较强多重共线性风险（condition_number={cond:.2f}）。")
+        warnings.append(f"potential multicollinearity detected (condition_number={cond:.2f})")
 
     def _safe_float(value: Any) -> float | None:
         try:
@@ -566,11 +566,11 @@ def run_ols(
             seen.add(col)
 
     if not regressors:
-        raise ValueError("至少选择一个 X 或 C 变量")
+        raise ValueError("鑷冲皯閫夋嫨涓€涓?X 鎴?C 鍙橀噺")
     if robust_se not in {"none", "HC1"}:
-        raise ValueError("fit_options.robust_se 仅支持 'none' 或 'HC1'")
+        raise ValueError("fit_options.robust_se 浠呮敮鎸?'none' 鎴?'HC1'")
     if y_col in regressors:
-        raise ValueError("y_col 不能与 X/C 变量重复")
+        raise ValueError("y_col 涓嶈兘涓?X/C 鍙橀噺閲嶅")
 
     if sm is not None and pd is not None:
         return _run_ols_statsmodels(rows, y_col, regressors, intercept, robust_se)
@@ -704,9 +704,9 @@ def _ensure_str_list(name: str, value: Any) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ValueError(f"{name} 必须是字符串列表")
+        raise ValueError(f"{name} 蹇呴』鏄瓧绗︿覆鍒楄〃")
     if any(not isinstance(item, str) or not item for item in value):
-        raise ValueError(f"{name} 仅允许非空字符串")
+        raise ValueError(f"{name} 浠呭厑璁搁潪绌哄瓧绗︿覆")
     return value
 
 
@@ -720,14 +720,14 @@ def _apply_preprocess(rows: list[dict[str, Any]], preprocess: dict[str, Any]) ->
 
     unknown = [c for c in [*log1p_cols, *zscore_cols] if c not in available_columns]
     if unknown:
-        raise ValueError(f"preprocess 包含不存在的列: {', '.join(sorted(set(unknown)))}")
+        raise ValueError(f"preprocess 鍖呭惈涓嶅瓨鍦ㄧ殑鍒? {', '.join(sorted(set(unknown)))}")
 
     transformed = [dict(row) for row in rows]
     warnings: list[str] = []
     applied_log_cols: list[str] = []
     applied_z_cols: list[str] = []
 
-    # 按固定顺序处理：先 log1p，再标准化。
+    # Process in fixed order: log1p first, then z-score.
     for col in log1p_cols:
         values: list[float] = []
         for row in transformed:
@@ -737,13 +737,13 @@ def _apply_preprocess(rows: list[dict[str, Any]], preprocess: dict[str, Any]) ->
             try:
                 numeric = float(raw)
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"preprocess.log1p_cols 中列 {col} 含非数值，无法转换") from exc
+                raise ValueError(f"preprocess.log1p_cols 涓垪 {col} 鍚潪鏁板€硷紝鏃犳硶杞崲") from exc
             if numeric < 0:
-                raise ValueError(f"preprocess.log1p_cols 中列 {col} 存在负值，无法执行 log(x+1)")
+                raise ValueError(f"preprocess.log1p_cols 涓垪 {col} 瀛樺湪璐熷€硷紝鏃犳硶鎵ц log(x+1)")
             values.append(numeric)
 
         if not values:
-            warnings.append(f"log1p 跳过列 {col}（无可用数值）。")
+            warnings.append(f"log1p skipped for {col} (no usable numeric values)")
             continue
 
         for row in transformed:
@@ -762,17 +762,17 @@ def _apply_preprocess(rows: list[dict[str, Any]], preprocess: dict[str, Any]) ->
             try:
                 values.append(float(raw))
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"preprocess.zscore_cols 中列 {col} 含非数值，无法标准化") from exc
+                raise ValueError(f"preprocess.zscore_cols column {col} contains non-numeric values") from exc
 
         if len(values) < 2:
-            warnings.append(f"z-score 跳过列 {col}（有效样本不足 2）。")
+            warnings.append(f"z-score skipped for {col} (fewer than 2 valid samples)")
             continue
 
         mean = sum(values) / len(values)
         variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
         std = math.sqrt(variance)
         if std == 0:
-            warnings.append(f"z-score 跳过列 {col}（标准差为 0）。")
+            warnings.append(f"z-score skipped for {col} (standard deviation is 0)")
             continue
 
         for row in transformed:
@@ -792,10 +792,10 @@ def _apply_preprocess(rows: list[dict[str, Any]], preprocess: dict[str, Any]) ->
 def run_model(payload: dict[str, Any]) -> dict[str, Any]:
     dataset_id = payload.get("dataset_id")
     if not dataset_id:
-        raise ValueError("缺少 dataset_id")
+        raise ValueError("缂哄皯 dataset_id")
     bundle = DATASETS.get(dataset_id)
     if bundle is None:
-        raise ValueError("dataset_id 不存在")
+        raise ValueError("dataset_id does not exist")
 
     y_col = payload.get("y_col")
     x_cols = _ensure_str_list("x_cols", payload.get("x_cols", []))
@@ -806,11 +806,11 @@ def run_model(payload: dict[str, Any]) -> dict[str, Any]:
     robust_se = fit_options.get("robust_se", "none")
 
     if not isinstance(y_col, str) or not y_col.strip():
-        raise ValueError("y_col 必须是非空字符串")
+        raise ValueError("y_col 蹇呴』鏄潪绌哄瓧绗︿覆")
     if robust_se not in {"none", "HC1"}:
-        raise ValueError("fit_options.robust_se 仅支持 'none' 或 'HC1'")
+        raise ValueError("fit_options.robust_se 浠呮敮鎸?'none' 鎴?'HC1'")
     if not isinstance(preprocess, dict):
-        raise ValueError("preprocess 必须是对象")
+        raise ValueError("preprocess must be an object")
 
     preprocess_log_cols = _ensure_str_list("preprocess.log1p_cols", preprocess.get("log1p_cols"))
     preprocess_zscore_cols = _ensure_str_list("preprocess.zscore_cols", preprocess.get("zscore_cols"))
@@ -893,7 +893,7 @@ def export_model_csv(model_id: str) -> str:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute("SELECT export_csv FROM model_runs WHERE id = ?", (model_id,)).fetchone()
     if not row:
-        raise ValueError("模型不存在")
+        raise ValueError("model not found")
     return str(row[0])
 
 
@@ -902,7 +902,7 @@ def export_model_markdown(model_id: str) -> str:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute("SELECT export_markdown FROM model_runs WHERE id = ?", (model_id,)).fetchone()
     if not row:
-        raise ValueError("模型不存在")
+        raise ValueError("model not found")
     return str(row[0])
 
 
@@ -911,7 +911,7 @@ def get_model_snapshot(model_id: str) -> dict[str, Any]:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute("SELECT result_json FROM model_runs WHERE id = ?", (model_id,)).fetchone()
     if not row:
-        raise ValueError("模型不存在")
+        raise ValueError("model not found")
     return json.loads(str(row[0]))
 
 
@@ -927,12 +927,12 @@ def _next_group_title(conn: sqlite3.Connection, dataset_id: str) -> str:
 def create_run_group(payload: dict[str, Any]) -> dict[str, Any]:
     dataset_id = payload.get("dataset_id")
     if not dataset_id:
-        raise ValueError("缺少 dataset_id")
+        raise ValueError("缂哄皯 dataset_id")
 
     group_title = payload.get("group_title")
     if group_title is not None:
         if not isinstance(group_title, str) or not group_title.strip():
-            raise ValueError("group_title 必须是非空字符串")
+            raise ValueError("group_title 蹇呴』鏄潪绌哄瓧绗︿覆")
         group_title = group_title.strip()
 
     model_payload = {k: v for k, v in payload.items() if k != "group_title"}
@@ -974,7 +974,7 @@ def create_run_group(payload: dict[str, Any]) -> dict[str, Any]:
 
 def list_run_groups(dataset_id: str, include_closed: bool = False) -> list[dict[str, Any]]:
     if not dataset_id:
-        raise ValueError("缺少 dataset_id")
+        raise ValueError("缂哄皯 dataset_id")
     init_db()
     query = """
         SELECT id, dataset_id, title, model_id, payload_json, summary_json, created_at, closed_at
@@ -1008,7 +1008,7 @@ def list_run_groups(dataset_id: str, include_closed: bool = False) -> list[dict[
 
 def close_run_group(group_id: str) -> dict[str, Any]:
     if not group_id:
-        raise ValueError("缺少 group_id")
+        raise ValueError("缂哄皯 group_id")
     init_db()
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
@@ -1016,7 +1016,7 @@ def close_run_group(group_id: str) -> dict[str, Any]:
             (group_id,),
         ).fetchone()
         if not row:
-            raise ValueError("回归组不存在")
+            raise ValueError("鍥炲綊缁勪笉瀛樺湪")
         if row[1] is not None:
             return {
                 "group_id": group_id,
@@ -1049,7 +1049,7 @@ def _rtf_escape(text: str) -> str:
     return "".join(out)
 
 
-def _rtf_format_number(value: Any, digits: int = 4) -> str:
+def _rtf_format_number(value: Any, digits: int = 4, *, thousands_sep: bool = False) -> str:
     if value is None:
         return ""
     try:
@@ -1058,28 +1058,93 @@ def _rtf_format_number(value: Any, digits: int = 4) -> str:
         return str(value)
     if math.isnan(num):
         return ""
+    if thousands_sep:
+        if digits == 0:
+            return f"{int(round(num)):,}"
+        return f"{num:,.{digits}f}"
     if digits == 0:
         return str(int(round(num)))
     return f"{num:.{digits}f}"
+
+
+def _ensure_int_range(name: str, value: Any, default: int, min_value: int, max_value: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer in [{min_value}, {max_value}]")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"{name} must be an integer in [{min_value}, {max_value}]")
+        value = int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        if not text.isdigit():
+            raise ValueError(f"{name} must be an integer in [{min_value}, {max_value}]")
+        value = int(text)
+    if not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer in [{min_value}, {max_value}]")
+    if value < min_value or value > max_value:
+        raise ValueError(f"{name} must be between {min_value} and {max_value}")
+    return value
+
+
+def _ensure_bool(name: str, value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+    raise ValueError(f"{name} must be a boolean (true/false)")
+
+
+def _normalize_rtf_export_format(format_options: dict[str, Any] | None) -> dict[str, Any]:
+    raw = format_options or {}
+    if not isinstance(raw, dict):
+        raise ValueError("format_options must be an object")
+    return {
+        "coef_digits": _ensure_int_range("format_options.coef_digits", raw.get("coef_digits"), 3, 0, 8),
+        "t_digits": _ensure_int_range("format_options.t_digits", raw.get("t_digits"), 2, 0, 8),
+        "stat_digits": _ensure_int_range("format_options.stat_digits", raw.get("stat_digits"), 3, 0, 8),
+        "desc_digits": _ensure_int_range("format_options.desc_digits", raw.get("desc_digits"), 3, 0, 8),
+        "thousands_sep": _ensure_bool("format_options.thousands_sep", raw.get("thousands_sep"), True),
+        "align_significance": _ensure_bool("format_options.align_significance", raw.get("align_significance"), True),
+    }
 
 
 def _rtf_table(
     headers: list[str],
     rows: list[list[str]],
     col_widths: list[int],
+    *,
+    bottom_border_rows: set[int] | None = None,
+    align_first_left: bool = True,
+    body_alignment: str = "\\qc",
 ) -> str:
     if len(headers) != len(col_widths):
-        raise ValueError("RTF 表头列数与列宽数量不一致")
+        raise ValueError("RTF table header count does not match col width count")
+    if body_alignment not in {"\\ql", "\\qc", "\\qr"}:
+        raise ValueError("body_alignment must be one of \\ql / \\qc / \\qr")
 
     lines: list[str] = []
     all_rows = [headers, *rows]
+    if bottom_border_rows is None:
+        bottom_border_rows = {len(all_rows) - 1}
     for i, row in enumerate(all_rows):
         if len(row) != len(headers):
             continue
         row_def = "\\trowd\\trgaph90\\trleft0"
         if i == 0:
-            row_def += "\\trbrdrt\\brdrs\\brdrw20\\trbrdrb\\brdrs\\brdrw20"
-        elif i == len(all_rows) - 1:
+            row_def += "\\trbrdrt\\brdrs\\brdrw20"
+        if i in bottom_border_rows:
             row_def += "\\trbrdrb\\brdrs\\brdrw20"
         lines.append(row_def)
 
@@ -1088,17 +1153,52 @@ def _rtf_table(
             x += width
             lines.append(f"\\cellx{x}")
 
-        for cell in row:
-            lines.append(f"\\pard\\intbl\\qc {_rtf_escape(cell)}\\cell")
+        for cidx, cell in enumerate(row):
+            if align_first_left and cidx == 0:
+                lines.append(f"\\pard\\intbl\\ql {_rtf_escape(cell)}\\cell")
+            else:
+                lines.append(f"\\pard\\intbl{body_alignment} {_rtf_escape(cell)}\\cell")
         lines.append("\\row")
     return "\n".join(lines) + "\n"
 
 
-def export_groups_rtf(dataset_id: str, group_ids: list[str]) -> tuple[str, str]:
+def _format_coef_cell(
+    coef_item: dict[str, Any],
+    *,
+    coef_digits: int,
+    thousands_sep: bool,
+    align_significance: bool,
+    coef_width: int,
+) -> str:
+    coef_text = _rtf_format_number(coef_item.get("coef"), digits=coef_digits, thousands_sep=thousands_sep)
+    sig = str(coef_item.get("significance") or "")
+    if not coef_text:
+        return ""
+    if not align_significance:
+        return f"{coef_text}{sig}"
+    fig_space = "\u2007"
+    width = max(coef_width, len(coef_text))
+    padded_coef = coef_text.rjust(width, fig_space)
+    sig_block = sig[:3].ljust(3, fig_space)
+    return f"{padded_coef}{sig_block}"
+
+
+def export_groups_rtf(
+    dataset_id: str,
+    group_ids: list[str],
+    format_options: dict[str, Any] | None = None,
+) -> tuple[str, str]:
     if not dataset_id:
-        raise ValueError("缺少 dataset_id")
+        raise ValueError("缂哄皯 dataset_id")
     if not isinstance(group_ids, list) or not group_ids or any(not isinstance(g, str) or not g for g in group_ids):
-        raise ValueError("group_ids 必须是非空字符串列表")
+        raise ValueError("group_ids 蹇呴』鏄潪绌哄瓧绗︿覆鍒楄〃")
+    fmt = _normalize_rtf_export_format(format_options)
+    coef_digits = int(fmt["coef_digits"])
+    t_digits = int(fmt["t_digits"])
+    stat_digits = int(fmt["stat_digits"])
+    desc_digits = int(fmt["desc_digits"])
+    thousands_sep = bool(fmt["thousands_sep"])
+    align_significance = bool(fmt["align_significance"])
 
     init_db()
     placeholders = ",".join("?" for _ in group_ids)
@@ -1128,9 +1228,10 @@ def export_groups_rtf(dataset_id: str, group_ids: list[str]) -> tuple[str, str]:
 
     missing = [gid for gid in group_ids if gid not in by_id]
     if missing:
-        raise ValueError(f"以下回归组不存在或不属于当前数据集: {', '.join(missing)}")
+        raise ValueError(f"浠ヤ笅鍥炲綊缁勪笉瀛樺湪鎴栦笉灞炰簬褰撳墠鏁版嵁闆? {', '.join(missing)}")
 
     ordered_groups = [by_id[gid] for gid in group_ids]
+    model_results = [get_model_snapshot(group["model_id"]) for group in ordered_groups]
     now_text = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     doc: list[str] = []
     doc.append("{\\rtf1\\ansi\\deff0")
@@ -1138,72 +1239,142 @@ def export_groups_rtf(dataset_id: str, group_ids: list[str]) -> tuple[str, str]:
     doc.append("\\viewkind4\\uc1\\pard\\f0\\fs22")
     doc.append(f"\\b {_rtf_escape('Regression & Descriptive Statistics Report')}\\b0\\par")
     doc.append(f"{_rtf_escape(f'Dataset ID: {dataset_id}')}\\par")
+    group_titles = " | ".join(f"({idx}) {g['title']}" for idx, g in enumerate(ordered_groups, start=1))
+    doc.append(f"{_rtf_escape(f'Models: {group_titles}')}\\par")
     doc.append(f"{_rtf_escape(f'Generated: {now_text}')}\\par\\par")
 
-    for idx, group in enumerate(ordered_groups, start=1):
-        model = get_model_snapshot(group["model_id"])
-        payload = group.get("payload") or {}
-        y_text = str(payload.get("y_col", "-"))
-        x_text = ", ".join(payload.get("x_cols", [])) or "-"
-        c_text = ", ".join(payload.get("c_cols", [])) or "-"
-        summary = model.get("summary", {})
-        desc_rows = model.get("descriptive_stats", [])
-        coef_rows = model.get("coefficients", [])
-
-        group_title_line = f"Group {idx}: {group['title']}"
-        doc.append(f"\\b {_rtf_escape(group_title_line)}\\b0\\par")
-        doc.append(f"{_rtf_escape(f'Variables: Y={y_text}; X={x_text}; C={c_text}')}\\par")
-        doc.append(
-            _rtf_escape(
-                f"Model summary: R2={_rtf_format_number(summary.get('r_squared'))}; "
-                f"Adj.R2={_rtf_format_number(summary.get('adj_r_squared'))}; "
-                f"N={_rtf_format_number(summary.get('n'), digits=0)}"
-            )
-            + "\\par\\par"
-        )
-
-        doc.append(f"\\b {_rtf_escape('Descriptive Statistics')}\\b0\\par")
-        desc_table_rows = [
+    # Panel A: descriptive statistics for the union of variables across selected models.
+    # Keep the first-seen order to mimic estout's stable listing.
+    desc_map: dict[str, dict[str, Any]] = {}
+    desc_order: list[str] = []
+    for model in model_results:
+        for row in model.get("descriptive_stats", []):
+            var = str(row.get("variable", ""))
+            if not var:
+                continue
+            if var not in desc_map:
+                desc_order.append(var)
+                desc_map[var] = row
+    doc.append(f"\\b {_rtf_escape('Panel A: Descriptive statistics')}\\b0\\par")
+    desc_headers = ["VARIABLES", "(1)", "(2)", "(3)", "(4)", "(5)", "(6)"]
+    desc_rows: list[list[str]] = [
+        ["", "N", "mean", "variance", "median", "min", "max"]
+    ]
+    desc_rows.extend(
+        [
             [
-                str(row.get("variable", "")),
-                _rtf_format_number(row.get("n"), digits=0),
-                _rtf_format_number(row.get("mean")),
-                _rtf_format_number(row.get("variance")),
-                _rtf_format_number(row.get("median")),
-                _rtf_format_number(row.get("min")),
-                _rtf_format_number(row.get("max")),
+                var,
+                _rtf_format_number(desc_map[var].get("n"), digits=0, thousands_sep=thousands_sep),
+                _rtf_format_number(desc_map[var].get("mean"), digits=desc_digits, thousands_sep=thousands_sep),
+                _rtf_format_number(desc_map[var].get("variance"), digits=desc_digits, thousands_sep=thousands_sep),
+                _rtf_format_number(desc_map[var].get("median"), digits=desc_digits, thousands_sep=thousands_sep),
+                _rtf_format_number(desc_map[var].get("min"), digits=desc_digits, thousands_sep=thousands_sep),
+                _rtf_format_number(desc_map[var].get("max"), digits=desc_digits, thousands_sep=thousands_sep),
             ]
-            for row in desc_rows
+            for var in desc_order
         ]
-        doc.append(
-            _rtf_table(
-                ["Variable", "N", "Mean", "Variance", "Median", "Min", "Max"],
-                desc_table_rows,
-                [2200, 900, 1200, 1200, 1200, 1200, 1200],
-            )
+    )
+    desc_bottom_rows = {1, len(desc_rows)}
+    doc.append(
+        _rtf_table(
+            desc_headers,
+            desc_rows,
+            [2600, 850, 1150, 1400, 1300, 1100, 1100],
+            bottom_border_rows=desc_bottom_rows,
+            align_first_left=True,
+            body_alignment="\\qr",
         )
-        doc.append("\\par")
+    )
+    doc.append("\\par")
 
-        doc.append(f"\\b {_rtf_escape('Regression Results')}\\b0\\par")
-        coef_table_rows = [
-            [
-                str(row.get("variable", "")),
-                _rtf_format_number(row.get("coef")),
-                _rtf_format_number(row.get("std_err")),
-                _rtf_format_number(row.get("t")),
-                _rtf_format_number(row.get("p")),
-                str(row.get("significance", "")),
-            ]
-            for row in coef_rows
+    # Panel B: regression results in outreg2/estout style
+    doc.append(f"\\b {_rtf_escape('Panel B: Regression results')}\\b0\\par")
+    reg_headers = ["VARIABLES"] + [f"({idx})" for idx in range(1, len(ordered_groups) + 1)]
+    reg_rows: list[list[str]] = [
+        [""] + [str(group["title"]) for group in ordered_groups]
+    ]
+
+    coef_maps: list[dict[str, dict[str, Any]]] = []
+    variable_order: list[str] = []
+    seen_vars: set[str] = set()
+    for model in model_results:
+        cmap: dict[str, dict[str, Any]] = {}
+        for row in model.get("coefficients", []):
+            var = str(row.get("variable", ""))
+            cmap[var] = row
+            if var not in seen_vars:
+                variable_order.append(var)
+                seen_vars.add(var)
+        coef_maps.append(cmap)
+    coef_widths: list[int] = []
+    for cmap in coef_maps:
+        texts = [
+            _rtf_format_number(item.get("coef"), digits=coef_digits, thousands_sep=thousands_sep)
+            for item in cmap.values()
         ]
-        doc.append(
-            _rtf_table(
-                ["Variable", "Coef", "Std.Err", "t", "p", "Sig"],
-                coef_table_rows,
-                [2600, 1300, 1300, 1200, 1200, 900],
+        coef_widths.append(max((len(text) for text in texts if text), default=0))
+
+    for var in variable_order:
+        label = "Constant" if var == "const" else var
+        coef_line = [label]
+        t_line = [""]
+        for model_idx, cmap in enumerate(coef_maps):
+            coef_item = cmap.get(var)
+            if not coef_item:
+                coef_line.append("")
+                t_line.append("")
+                continue
+            coef_line.append(
+                _format_coef_cell(
+                    coef_item,
+                    coef_digits=coef_digits,
+                    thousands_sep=thousands_sep,
+                    align_significance=align_significance,
+                    coef_width=coef_widths[model_idx],
+                )
             )
+            t_text = _rtf_format_number(coef_item.get("t"), digits=t_digits, thousands_sep=thousands_sep)
+            t_line.append(f"({t_text})" if t_text else "")
+        reg_rows.append(coef_line)
+        reg_rows.append(t_line)
+
+    summary_rows = [
+        ("Observations", "n", 0),
+        ("R-squared", "r_squared", stat_digits),
+        ("Adj. R-squared", "adj_r_squared", stat_digits),
+    ]
+    for title, key, digits in summary_rows:
+        row = [title]
+        for model in model_results:
+            row.append(
+                _rtf_format_number(
+                    model.get("summary", {}).get(key),
+                    digits=digits,
+                    thousands_sep=thousands_sep,
+                )
+            )
+        reg_rows.append(row)
+
+    reg_bottom_rows = {1, len(reg_rows)}
+    reg_col_widths = [3000] + [int((8600 - 3000) / max(len(ordered_groups), 1)) for _ in ordered_groups]
+    doc.append(
+        _rtf_table(
+            reg_headers,
+            reg_rows,
+            reg_col_widths,
+            bottom_border_rows=reg_bottom_rows,
+            align_first_left=True,
+            body_alignment="\\qr",
         )
-        doc.append("\\par\\par")
+    )
+    robust_any = any(
+        str(((group.get("payload") or {}).get("fit_options") or {}).get("robust_se") or "none").lower() != "none"
+        for group in ordered_groups
+    )
+    t_note = "Robust t-statistics in parentheses" if robust_any else "t-statistics in parentheses"
+    doc.append(f"\\pard\\qc {_rtf_escape(t_note)}\\par")
+    doc.append(f"\\pard\\qc {_rtf_escape('*** p<0.01, ** p<0.05, * p<0.1')}\\par")
+    doc.append("\\par")
 
     doc.append("}")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -1216,7 +1387,7 @@ def create_fastapi_app() -> Any:
         from fastapi import FastAPI, File, HTTPException
         from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
     except Exception as exc:  # pragma: no cover
-        raise RuntimeError("FastAPI 未安装，无法创建 API 应用") from exc
+        raise RuntimeError("FastAPI 鏈畨瑁咃紝鏃犳硶鍒涘缓 API 搴旂敤") from exc
 
     api = FastAPI(title="Regression MVP API", version="1.0.0")
 
@@ -1238,7 +1409,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"上传失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"涓婁紶澶辫触: {exc}") from exc
 
     @api.post("/api/models/run")
     async def api_run_model(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1247,7 +1418,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"模型运行失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"妯″瀷杩愯澶辫触: {exc}") from exc
 
     @api.post("/api/groups/create-and-run")
     async def api_create_group_and_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1256,7 +1427,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"创建回归组失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"鍒涘缓鍥炲綊缁勫け璐? {exc}") from exc
 
     @api.get("/api/datasets/{dataset_id}/groups")
     async def api_list_groups(dataset_id: str, include_closed: bool = False) -> dict[str, Any]:
@@ -1266,7 +1437,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"读取回归组失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"璇诲彇鍥炲綊缁勫け璐? {exc}") from exc
 
     @api.delete("/api/groups/{group_id}")
     async def api_close_group(group_id: str) -> dict[str, Any]:
@@ -1275,14 +1446,17 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"关闭回归组失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"鍏抽棴鍥炲綊缁勫け璐? {exc}") from exc
 
     @api.post("/api/groups/export.rtf")
     async def api_export_groups_rtf(payload: dict[str, Any]) -> Response:
         try:
             dataset_id = str(payload.get("dataset_id") or "")
             group_ids = _ensure_str_list("group_ids", payload.get("group_ids"))
-            rtf_text, filename = export_groups_rtf(dataset_id, group_ids)
+            format_options = payload.get("format_options")
+            if format_options is not None and not isinstance(format_options, dict):
+                raise ValueError("format_options must be an object")
+            rtf_text, filename = export_groups_rtf(dataset_id, group_ids, format_options=format_options)
             return Response(
                 content=rtf_text,
                 media_type="application/rtf; charset=utf-8",
@@ -1291,7 +1465,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"导出 RTF 失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"瀵煎嚭 RTF 澶辫触: {exc}") from exc
 
     @api.get("/api/models/{model_id}/export.csv")
     async def api_export_csv(model_id: str) -> PlainTextResponse:
@@ -1305,7 +1479,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"导出失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"瀵煎嚭澶辫触: {exc}") from exc
 
     @api.get("/api/models/{model_id}/export.md")
     async def api_export_markdown(model_id: str) -> PlainTextResponse:
@@ -1318,7 +1492,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"导出失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"瀵煎嚭澶辫触: {exc}") from exc
 
     @api.get("/api/models/{model_id}")
     async def api_get_model(model_id: str) -> dict[str, Any]:
@@ -1327,7 +1501,7 @@ def create_fastapi_app() -> Any:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"读取失败: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"璇诲彇澶辫触: {exc}") from exc
 
     return api
 
@@ -1336,3 +1510,4 @@ try:  # pragma: no cover
     app = create_fastapi_app()
 except RuntimeError:
     app = None
+
